@@ -1,0 +1,26 @@
+# cargo-release configuration
+
+# Don't publish to crates.io directly (GitHub Actions will do it)
+publish = false
+
+# Push tags to origin
+push = true
+
+# Tag prefix
+tag-prefix = ""
+
+# Tag message format
+tag-message = "Release version {{version}}"
+
+# Commit message format
+pre-release-commit-message = "chore: bump version to {{version}}"
+
+# Don't push the main branch (only tags)
+push-options = ["--tags"]
+
+# Sign commits and tags (optional)
+sign-commit = false
+sign-tag = false
+
+# Allow dirty working directory
+allow-branch = ["main"]

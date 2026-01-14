@@ -7,14 +7,6 @@ A Rust library that converts MPEG-2 TS (Transport Stream) files to MP4 format. C
 This project started as a personal implementation to understand TS (Transport Stream) and MP4 formats,
 and for this reason, the content may be somewhat rough around the edges.
 
-### Additional Resources
-
-| docs | description | lang |
-| - | - | - |
-| TS_STRUCTURE.md | TS packet generation and processing | [ko](./docs/ko/TS_STRUCTURE.md), [en](./docs/en/TS_STRUCTURE.md) |
-| MP4_STRUCTURE.md | MP4 generation and structure | [ko](./docs/ko/MP4_STRUCTURE.md), [en](./docs/en/MP4_STRUCTURE.md) |
-| 90kHZ_MAGIC.md | Why is 90kHz used for frame synchronization? | [ko](./docs/ko/90kHz_MAGIC.md), [en](./docs/en/90kHz_MAGIC.md) |
-
 ## Features
 
 - **H.264 video** + **AAC audio** full support
@@ -32,13 +24,16 @@ cargo build --release
 
 ## Usage
 
-### CLI Usage
+### As a Rust Library
 
-```bash
-cargo run --release -- input.ts output.mp4
+If you wanna specific version, add to your Cargo.toml:
+
+```toml
+[dependencies]
+ts2mp4 = "0.1.0"
 ```
 
-### Using as a Rust Library
+then...
 
 ```rust
 use ts2mp4::convert_ts_to_mp4;
@@ -52,23 +47,22 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-## WebAssembly Build
+### As a CLI Tool
 
-### Prerequisites
+```bash
+cargo install ts2mp4
+cargo run --release -- input.ts output.mp4
+```
+
+## For WebAssembly
+
+Build from source:
 
 ```bash
 # Install wasm-pack
 cargo install wasm-pack
 
-# Or add wasm32 target
-rustup target add wasm32-unknown-unknown
-```
-
-### How to Build WASM
-
-#### 1. Using wasm-pack (Recommended)
-
-```bash
+# Build
 wasm-pack build --target web
 ```
 
@@ -78,70 +72,10 @@ This will generate the following files in the `pkg/` directory:
 - `ts2mp4_bg.wasm` - WebAssembly binary
 - `ts2mp4.d.ts` - TypeScript type definitions
 
-#### 2. Manual Build
-
-```bash
-cargo build --target wasm32-unknown-unknown --release
-wasm-bindgen target/wasm32-unknown-unknown/release/ts2mp4.wasm --out-dir pkg --target web
-```
-
 ### Using in Web Browsers
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>TS to MP4 Converter</title>
-</head>
-<body>
-    <input type="file" id="fileInput" accept=".ts">
-    <button id="convertBtn">Convert to MP4</button>
-
-    <script type="module">
-        import init, { convert_ts_to_mp4_wasm } from './pkg/ts2mp4.js';
-
-        async function convertFile() {
-            // Initialize WASM
-            await init();
-
-            const fileInput = document.getElementById('fileInput');
-            const file = fileInput.files[0];
-
-            if (!file) {
-                alert('Please select a file');
-                return;
-            }
-
-            // Read file
-            const arrayBuffer = await file.arrayBuffer();
-            const tsData = new Uint8Array(arrayBuffer);
-
-            try {
-                // Convert TS to MP4 (no SharedArrayBuffer required)
-                const mp4Data = convert_ts_to_mp4_wasm(tsData);
-
-                // Download MP4 file
-                const blob = new Blob([mp4Data], { type: 'video/mp4' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'output.mp4';
-                a.click();
-                URL.revokeObjectURL(url);
-
-                alert('Conversion successful!');
-            } catch (error) {
-                console.error('Conversion failed:', error);
-                alert('Conversion failed: ' + error);
-            }
-        }
-
-        document.getElementById('convertBtn').addEventListener('click', convertFile);
-    </script>
-</body>
-</html>
-```
+[DEMO Page](https://aciddust.github.io/ts2mp4)
+[example](./web/index.html)
 
 ## Why Not Use SharedArrayBuffer?
 
@@ -248,6 +182,14 @@ For detailed usage, refer to [DEV_GUIDE.md](docs/DEV_GUIDE.md).
 ## Troubleshooting
 
 For common issues and solutions, refer to the "Troubleshooting" section in [DEV_GUIDE.md](docs/DEV_GUIDE.md).
+
+### Additional Resources
+
+| docs | description | lang |
+| - | - | - |
+| TS_STRUCTURE.md | TS packet generation and processing | [ko](./docs/ko/TS_STRUCTURE.md), [en](./docs/en/TS_STRUCTURE.md) |
+| MP4_STRUCTURE.md | MP4 generation and structure | [ko](./docs/ko/MP4_STRUCTURE.md), [en](./docs/en/MP4_STRUCTURE.md) |
+| 90kHZ_MAGIC.md | Why is 90kHz used for frame synchronization? | [ko](./docs/ko/90kHz_MAGIC.md), [en](./docs/en/90kHz_MAGIC.md) |
 
 ## License
 

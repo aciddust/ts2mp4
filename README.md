@@ -1,29 +1,44 @@
 # TS to MP4 Converter
 
-MPEG-2 TS(Transport Stream) 파일을 MP4 형식으로 변환하는 Rust 라이브러리입니다. WebAssembly로 컴파일하여 웹 브라우저에서도 사용할 수 있습니다.
+A Rust library that converts MPEG-2 TS (Transport Stream) files to MP4 format. Can be compiled to WebAssembly for use in web browsers.
 
-## 특징
+## Before You Start
 
-- 순수 Rust 구현 (SharedArrayBuffer 불필요)
-- WebAssembly 지원
-- 단일 스레드 동작으로 웹 환경에서 안전하게 사용 가능
-- Zero-copy 최적화
+This project started as a personal implementation to understand TS (Transport Stream) and MP4 formats,
+and for this reason, the content may be somewhat rough around the edges.
 
-## 설치
+### Additional Resources
+
+| docs | description | lang |
+| - | - | - |
+| TS_STRUCTURE.md | TS packet generation and processing | [ko](./docs/ko/TS_STRUCTURE.md), [en](./docs/en/TS_STRUCTURE.md) |
+| MP4_STRUCTURE.md | MP4 generation and structure | [ko](./docs/ko/MP4_STRUCTURE.md), [en](./docs/en/MP4_STRUCTURE.md) |
+| 90kHZ_MAGIC.md | Why is 90kHz used for frame synchronization? | [ko](./docs/ko/90kHz_MAGIC.md), [en](./docs/en/90kHz_MAGIC.md) |
+
+## Features
+
+- **H.264 video** + **AAC audio** full support
+- Pure Rust implementation (no SharedArrayBuffer required)
+- WebAssembly support
+- Safe for web environments with single-threaded operation
+- Zero-copy optimization
+- Compatible with major players like QuickTime, VLC, ffplay
+
+## Installation
 
 ```bash
 cargo build --release
 ```
 
-## 사용법
+## Usage
 
-### CLI 사용
+### CLI Usage
 
 ```bash
 cargo run --release -- input.ts output.mp4
 ```
 
-### Rust 라이브러리로 사용
+### Using as a Rust Library
 
 ```rust
 use ts2mp4::convert_ts_to_mp4;
@@ -37,39 +52,40 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-## WebAssembly 빌드
+## WebAssembly Build
 
-### 사전 요구사항
+### Prerequisites
 
 ```bash
-# wasm-pack 설치
+# Install wasm-pack
 cargo install wasm-pack
 
-# 또는 wasm32 타겟 추가
+# Or add wasm32 target
 rustup target add wasm32-unknown-unknown
 ```
 
-### WASM 빌드 방법
+### How to Build WASM
 
-#### 1. wasm-pack 사용 (권장)
+#### 1. Using wasm-pack (Recommended)
 
 ```bash
 wasm-pack build --target web
 ```
 
-이렇게 하면 `pkg/` 디렉토리에 다음 파일들이 생성됩니다:
-- `ts2mp4.js` - JavaScript 바인딩
-- `ts2mp4_bg.wasm` - WebAssembly 바이너리
-- `ts2mp4.d.ts` - TypeScript 타입 정의
+This will generate the following files in the `pkg/` directory:
 
-#### 2. 직접 빌드
+- `ts2mp4.js` - JavaScript bindings
+- `ts2mp4_bg.wasm` - WebAssembly binary
+- `ts2mp4.d.ts` - TypeScript type definitions
+
+#### 2. Manual Build
 
 ```bash
 cargo build --target wasm32-unknown-unknown --release
 wasm-bindgen target/wasm32-unknown-unknown/release/ts2mp4.wasm --out-dir pkg --target web
 ```
 
-### 웹에서 사용하기
+### Using in Web Browsers
 
 ```html
 <!DOCTYPE html>
@@ -81,31 +97,31 @@ wasm-bindgen target/wasm32-unknown-unknown/release/ts2mp4.wasm --out-dir pkg --t
 <body>
     <input type="file" id="fileInput" accept=".ts">
     <button id="convertBtn">Convert to MP4</button>
-    
+
     <script type="module">
         import init, { convert_ts_to_mp4_wasm } from './pkg/ts2mp4.js';
-        
+
         async function convertFile() {
-            // WASM 초기화
+            // Initialize WASM
             await init();
-            
+
             const fileInput = document.getElementById('fileInput');
             const file = fileInput.files[0];
-            
+
             if (!file) {
                 alert('Please select a file');
                 return;
             }
-            
-            // 파일 읽기
+
+            // Read file
             const arrayBuffer = await file.arrayBuffer();
             const tsData = new Uint8Array(arrayBuffer);
-            
+
             try {
-                // TS를 MP4로 변환 (SharedArrayBuffer 불필요)
+                // Convert TS to MP4 (no SharedArrayBuffer required)
                 const mp4Data = convert_ts_to_mp4_wasm(tsData);
-                
-                // MP4 파일 다운로드
+
+                // Download MP4 file
                 const blob = new Blob([mp4Data], { type: 'video/mp4' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -113,47 +129,47 @@ wasm-bindgen target/wasm32-unknown-unknown/release/ts2mp4.wasm --out-dir pkg --t
                 a.download = 'output.mp4';
                 a.click();
                 URL.revokeObjectURL(url);
-                
+
                 alert('Conversion successful!');
             } catch (error) {
                 console.error('Conversion failed:', error);
                 alert('Conversion failed: ' + error);
             }
         }
-        
+
         document.getElementById('convertBtn').addEventListener('click', convertFile);
     </script>
 </body>
 </html>
 ```
 
-## SharedArrayBuffer를 사용하지 않는 이유
+## Why Not Use SharedArrayBuffer?
 
-이 라이브러리는 의도적으로 SharedArrayBuffer를 사용하지 않도록 설계되었습니다:
+This library is intentionally designed not to use SharedArrayBuffer:
 
-### 장점
+### Advantages
 
-1. **브라우저 호환성**: SharedArrayBuffer는 COOP/COEP 헤더 설정이 필요하여 많은 호스팅 환경에서 사용하기 어렵습니다
-2. **보안**: Spectre 취약점 완화를 위해 많은 브라우저에서 제한됩니다
-3. **단순성**: 복잡한 서버 설정 없이 바로 사용 가능합니다
-4. **단일 스레드**: 메모리 관리가 간단하고 예측 가능합니다
+1. **Browser Compatibility**: SharedArrayBuffer requires COOP/COEP header configuration, making it difficult to use in many hosting environments
+2. **Security**: Restricted in many browsers to mitigate Spectre vulnerabilities
+3. **Simplicity**: Can be used immediately without complex server configuration
+4. **Single-threaded**: Simple and predictable memory management
 
-### 성능 최적화 방법
+### Performance Optimization Techniques
 
-SharedArrayBuffer 없이도 좋은 성능을 얻을 수 있습니다:
+Good performance can be achieved without SharedArrayBuffer:
 
-1. **스트리밍 처리**: 전체 파일을 메모리에 로드하지 않고 청크 단위로 처리
-2. **Web Workers**: 메인 스레드 블로킹 방지를 위해 Worker에서 실행
-3. **비동기 처리**: 큰 파일의 경우 작업을 나누어 처리
+1. **Streaming Processing**: Process in chunks instead of loading entire file into memory
+2. **Web Workers**: Execute in workers to prevent main thread blocking
+3. **Asynchronous Processing**: Split work for large files
 
 ```javascript
-// Web Worker에서 사용하는 예시
+// Example using Web Worker
 // worker.js
 import init, { convert_ts_to_mp4_wasm } from './pkg/ts2mp4.js';
 
 self.onmessage = async (e) => {
     await init();
-    
+
     try {
         const mp4Data = convert_ts_to_mp4_wasm(e.data);
         self.postMessage({ success: true, data: mp4Data });
@@ -167,7 +183,7 @@ const worker = new Worker('worker.js', { type: 'module' });
 
 worker.onmessage = (e) => {
     if (e.data.success) {
-        // MP4 데이터 처리
+        // Process MP4 data
         const blob = new Blob([e.data.data], { type: 'video/mp4' });
         // ...
     } else {
@@ -175,23 +191,68 @@ worker.onmessage = (e) => {
     }
 };
 
-// 변환 시작
+// Start conversion
 worker.postMessage(tsData);
 ```
 
-## 제한사항
+## Supported Features
 
-현재 버전은 기본적인 TS to MP4 변환 기능을 제공합니다. 다음 기능들은 향후 추가될 예정입니다:
+### Currently Supported
 
-- 완전한 MP4 메타데이터 생성 (moov, trak 등)
-- 다양한 코덱 지원
-- 타임스탬프 처리
-- 다중 오디오/자막 트랙 지원
+- **Video Codec**: H.264 (AVC) Main/High Profile
+- **Audio Codec**: AAC-LC (Stereo, 48kHz)
+- **Container**: MP4 (ISO/IEC 14496-12 compliant)
+- **Metadata**: Complete moov/trak/stbl structure
+- **Timestamps**: Accurate synchronization based on PTS/DTS
+- **Auto-detection**:
+  - Resolution (SPS parsing)
+  - Frame rate
 
-## 라이선스
+### Future Plans
+
+- Additional audio codecs (Opus, etc.)
+- Multiple audio/subtitle tracks
+- Variable frame rate support
+- HDR metadata
+- Timestamp processing improvements
+
+## Development Guide
+
+For detailed development and debugging instructions, see [DEV_GUIDE.md](DEV_GUIDE.md).
+
+### Quick Start
+
+```bash
+# Build
+cargo build --release
+
+# Test
+./target/release/ts2mp4 input.ts output.mp4
+
+# Verify
+ffprobe output.mp4
+ffplay output.mp4
+```
+
+### Debugging Tools
+
+The `test-scripts/` directory contains Python scripts for analyzing MP4 file structure:
+
+- `test-scripts/analyze_mp4.py` - Analyze box structure
+- `test-scripts/check_all_durations.py` - Verify durations
+- `test-scripts/check_stts.py` - Check Time-to-Sample
+- `test-scripts/verify_audio_data.py` - Verify audio data positions
+
+For detailed usage, refer to [DEV_GUIDE.md](docs/DEV_GUIDE.md).
+
+## Troubleshooting
+
+For common issues and solutions, refer to the "Troubleshooting" section in [DEV_GUIDE.md](docs/DEV_GUIDE.md).
+
+## License
 
 MIT
 
-## 기여
+## Contributing
 
-이슈나 PR은 언제나 환영합니다!
+Issues and PRs are always welcome!

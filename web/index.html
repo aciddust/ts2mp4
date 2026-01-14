@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TS to MP4 Converter</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+      }
+
+      .container {
+        background: white;
+        border-radius: 20px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        padding: 40px;
+        max-width: 600px;
+        width: 100%;
+      }
+
+      h1 {
+        color: #333;
+        margin-bottom: 10px;
+        font-size: 28px;
+      }
+
+      .subtitle {
+        color: #666;
+        margin-bottom: 30px;
+        font-size: 14px;
+      }
+
+      .upload-area {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        padding: 40px;
+        text-align: center;
+        background: #f8f9ff;
+        transition: all 0.3s ease;
+        cursor: pointer;
+      }
+
+      .upload-area:hover {
+        border-color: #764ba2;
+        background: #f0f2ff;
+      }
+
+      .upload-area.dragover {
+        border-color: #764ba2;
+        background: #e8eaff;
+        transform: scale(1.02);
+      }
+
+      .upload-icon {
+        font-size: 48px;
+        margin-bottom: 15px;
+      }
+
+      .upload-text {
+        color: #667eea;
+        font-weight: 500;
+        margin-bottom: 10px;
+      }
+
+      .upload-hint {
+        color: #999;
+        font-size: 12px;
+      }
+
+      input[type="file"] {
+        display: none;
+      }
+
+      .file-info {
+        background: #f8f9ff;
+        border-radius: 10px;
+        padding: 20px;
+        margin-top: 20px;
+        display: none;
+      }
+
+      .file-info.show {
+        display: block;
+      }
+
+      .file-name {
+        color: #333;
+        font-weight: 500;
+        margin-bottom: 5px;
+        word-break: break-all;
+      }
+
+      .file-size {
+        color: #666;
+        font-size: 14px;
+      }
+
+      .button-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      button {
+        flex: 1;
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .convert-btn {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .convert-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+
+      .convert-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .clear-btn {
+        background: #e0e0e0;
+        color: #666;
+      }
+
+      .clear-btn:hover {
+        background: #d0d0d0;
+      }
+
+      .progress {
+        margin-top: 20px;
+        display: none;
+      }
+
+      .progress.show {
+        display: block;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 8px;
+        background: #e0e0e0;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        width: 0%;
+        transition: width 0.3s ease;
+      }
+
+      .progress-text {
+        text-align: center;
+        margin-top: 10px;
+        color: #666;
+        font-size: 14px;
+      }
+
+      .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 8px;
+        display: none;
+        font-size: 14px;
+      }
+
+      .status.show {
+        display: block;
+      }
+
+      .status.success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .status.error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .footer {
+        margin-top: 30px;
+        text-align: center;
+        color: #999;
+        font-size: 12px;
+      }
+
+      .footer a {
+        color: #667eea;
+        text-decoration: none;
+      }
+
+      .footer a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎬 TS to MP4 Converter</h1>
+      <p class="subtitle">
+        Convert MPEG-2 Transport Stream files to MP4 format in your browser
+      </p>
+
+      <div class="upload-area" id="uploadArea">
+        <div class="upload-icon">📁</div>
+        <div class="upload-text">Click to select or drag & drop TS file</div>
+        <div class="upload-hint">Supports .ts files</div>
+        <input type="file" id="fileInput" accept=".ts" />
+      </div>
+
+      <div class="file-info" id="fileInfo">
+        <div class="file-name" id="fileName"></div>
+        <div class="file-size" id="fileSize"></div>
+      </div>
+
+      <div class="button-group">
+        <button class="convert-btn" id="convertBtn" disabled>
+          Convert to MP4
+        </button>
+        <button class="clear-btn" id="clearBtn">Clear</button>
+      </div>
+
+      <div class="progress" id="progress">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-text" id="progressText">Processing...</div>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <div class="footer">
+        <p>
+          Powered by WebAssembly |
+          <a href="https://github.com/aciddust/ts2mp4" target="_blank"
+            >GitHub</a
+          >
+        </p>
+      </div>
+    </div>
+
+    <script type="module">
+      import init, { convert_ts_to_mp4_wasm } from "./ts2mp4.js";
+
+      let selectedFile = null;
+
+      const uploadArea = document.getElementById("uploadArea");
+      const fileInput = document.getElementById("fileInput");
+      const fileInfo = document.getElementById("fileInfo");
+      const fileName = document.getElementById("fileName");
+      const fileSize = document.getElementById("fileSize");
+      const convertBtn = document.getElementById("convertBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const progress = document.getElementById("progress");
+      const progressFill = document.getElementById("progressFill");
+      const progressText = document.getElementById("progressText");
+      const status = document.getElementById("status");
+
+      // Initialize WASM
+      async function initialize() {
+        try {
+          await init();
+          console.log("WASM initialized successfully");
+        } catch (error) {
+          console.error("Failed to initialize WASM:", error);
+          showStatus(
+            "Failed to initialize converter. Please refresh the page.",
+            "error"
+          );
+        }
+      }
+
+      // Format file size
+      function formatFileSize(bytes) {
+        if (bytes === 0) return "0 Bytes";
+        const k = 1024;
+        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return (
+          Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i]
+        );
+      }
+
+      // Show status message
+      function showStatus(message, type = "success") {
+        status.textContent = message;
+        status.className = `status show ${type}`;
+      }
+
+      // Hide status message
+      function hideStatus() {
+        status.className = "status";
+      }
+
+      // Handle file selection
+      function handleFileSelect(file) {
+        if (!file) return;
+
+        if (!file.name.toLowerCase().endsWith(".ts")) {
+          showStatus("Please select a valid .ts file", "error");
+          return;
+        }
+
+        selectedFile = file;
+        fileName.textContent = `📄 ${file.name}`;
+        fileSize.textContent = `Size: ${formatFileSize(file.size)}`;
+        fileInfo.classList.add("show");
+        convertBtn.disabled = false;
+        hideStatus();
+      }
+
+      // Clear selection
+      function clearSelection() {
+        selectedFile = null;
+        fileInput.value = "";
+        fileInfo.classList.remove("show");
+        convertBtn.disabled = true;
+        progress.classList.remove("show");
+        hideStatus();
+      }
+
+      // Download file
+      function downloadFile(data, filename) {
+        const blob = new Blob([data], { type: "video/mp4" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      // Convert file
+      async function convertFile() {
+        if (!selectedFile) return;
+
+        convertBtn.disabled = true;
+        clearBtn.disabled = true;
+        progress.classList.add("show");
+        progressFill.style.width = "0%";
+        progressText.textContent = "Reading file...";
+        hideStatus();
+
+        try {
+          // Read file
+          const arrayBuffer = await selectedFile.arrayBuffer();
+          progressFill.style.width = "30%";
+          progressText.textContent = "Converting...";
+
+          // Convert to Uint8Array
+          const tsData = new Uint8Array(arrayBuffer);
+
+          // Convert TS to MP4
+          const mp4Data = convert_ts_to_mp4_wasm(tsData);
+          progressFill.style.width = "90%";
+          progressText.textContent = "Preparing download...";
+
+          // Download result
+          const outputFileName = selectedFile.name.replace(/\.ts$/i, ".mp4");
+          downloadFile(mp4Data, outputFileName);
+
+          progressFill.style.width = "100%";
+          progressText.textContent = "Complete!";
+          showStatus(`Successfully converted to ${outputFileName}`, "success");
+        } catch (error) {
+          console.error("Conversion error:", error);
+          showStatus(`Conversion failed: ${error.message}`, "error");
+        } finally {
+          convertBtn.disabled = false;
+          clearBtn.disabled = false;
+          setTimeout(() => {
+            progress.classList.remove("show");
+          }, 2000);
+        }
+      }
+
+      // Event listeners
+      uploadArea.addEventListener("click", () => fileInput.click());
+
+      fileInput.addEventListener("change", (e) => {
+        handleFileSelect(e.target.files[0]);
+      });
+
+      // Drag and drop
+      uploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        uploadArea.classList.add("dragover");
+      });
+
+      uploadArea.addEventListener("dragleave", () => {
+        uploadArea.classList.remove("dragover");
+      });
+
+      uploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+        handleFileSelect(e.dataTransfer.files[0]);
+      });
+
+      convertBtn.addEventListener("click", convertFile);
+      clearBtn.addEventListener("click", clearSelection);
+
+      // Initialize on load
+      initialize();
+    </script>
+  </body>
+</html>

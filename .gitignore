@@ -6,6 +6,7 @@ Cargo.lock
 # WASM build output
 /pkg/
 *.wasm
+!ts2mp4_bg.wasm
 
 # IDE
 .vscode/
@@ -22,3 +23,4 @@ Thumbs.db
 *.ts
 *.mp4
 test_data/
+shelf

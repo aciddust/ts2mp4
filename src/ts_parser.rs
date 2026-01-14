@@ -16,6 +16,10 @@ pub struct MediaData {
     pub frame_timestamps: Vec<(Option<u64>, Option<u64>)>, // (PTS, DTS) pairs
     pub video_pid: Option<u16>,
     pub audio_pid: Option<u16>,
+    pub audio_frames: Vec<Vec<u8>>, // AAC audio frames (without ADTS headers)
+    pub audio_timestamps: Vec<Option<u64>>, // Audio PTS values
+    pub audio_buffer: Vec<u8>,      // Temporary buffer for collecting audio PES packets
+    pub current_audio_pts: Option<u64>, // PTS for the current audio PES packet being accumulated
     pub width: u16,
     pub height: u16,
     pub sps: Option<Vec<u8>>,
@@ -29,6 +33,10 @@ impl MediaData {
             frame_timestamps: Vec::new(),
             video_pid: None,
             audio_pid: None,
+            audio_frames: Vec::new(),
+            audio_timestamps: Vec::new(),
+            audio_buffer: Vec::new(),
+            current_audio_pts: None,
             width: 1920,
             height: 1080,
             sps: None,
@@ -122,10 +130,111 @@ pub fn parse_ts_packets(data: &[u8]) -> io::Result<MediaData> {
                 media_data.video_stream.extend_from_slice(payload);
             }
         } else if Some(pid) == media_data.audio_pid {
-            // Skip audio for now
+            if payload_start && payload.len() >= 9 {
+                // Process any buffered audio data from previous PES packet
+                if !media_data.audio_buffer.is_empty() {
+                    let (aac_frames, consumed) = extract_aac_frames(&media_data.audio_buffer);
+                    // Use the stored PTS from the previous PES packet
+                    for _ in 0..aac_frames.len() {
+                        media_data
+                            .audio_timestamps
+                            .push(media_data.current_audio_pts);
+                    }
+                    media_data.audio_frames.extend(aac_frames);
+                    // Remove consumed bytes from buffer
+                    media_data.audio_buffer.drain(..consumed);
+                }
+
+                // Start of new audio PES packet - extract timestamps and data
+                let (pts, _) = extract_pes_timestamps(payload);
+                media_data.current_audio_pts = pts; // Store PTS for this PES packet
+
+                let pes_data = extract_pes_payload(payload);
+
+                // Store in buffer for potential continuation packets
+                media_data.audio_buffer.extend_from_slice(&pes_data);
+
+                // Try to extract complete AAC frames
+                let (aac_frames, consumed) = extract_aac_frames(&media_data.audio_buffer);
+                if !aac_frames.is_empty() {
+                    // Assign PTS to all frames extracted from this PES packet
+                    for _ in 0..aac_frames.len() {
+                        media_data.audio_timestamps.push(pts);
+                    }
+                    media_data.audio_frames.extend(aac_frames);
+                    // Remove consumed bytes from buffer
+                    media_data.audio_buffer.drain(..consumed);
+                }
+                // If no complete frames, keep data in buffer for continuation
+            } else if !payload_start && !payload.is_empty() {
+                // Continuation of audio PES packet
+                media_data.audio_buffer.extend_from_slice(payload);
+
+                // Try to extract complete AAC frames from accumulated data
+                let (aac_frames, consumed) = extract_aac_frames(&media_data.audio_buffer);
+                if !aac_frames.is_empty() {
+                    // Use the PTS stored from the PES packet start
+                    for _ in 0..aac_frames.len() {
+                        media_data
+                            .audio_timestamps
+                            .push(media_data.current_audio_pts);
+                    }
+                    media_data.audio_frames.extend(aac_frames);
+                    // Remove consumed bytes from buffer
+                    media_data.audio_buffer.drain(..consumed);
+                }
+            }
         }
 
         offset += TS_PACKET_SIZE;
+    }
+
+    // Process any remaining buffered audio data
+    if !media_data.audio_buffer.is_empty() {
+        let (aac_frames, _consumed) = extract_aac_frames(&media_data.audio_buffer);
+        for _ in 0..aac_frames.len() {
+            media_data
+                .audio_timestamps
+                .push(media_data.current_audio_pts);
+        }
+        media_data.audio_frames.extend(aac_frames);
+    }
+
+    println!(
+        "Total audio frames collected: {}",
+        media_data.audio_frames.len()
+    );
+    println!(
+        "Total video frames collected: {}",
+        media_data.frame_timestamps.len()
+    );
+
+    if !media_data.audio_timestamps.is_empty() {
+        if let Some(Some(first_audio_pts)) = media_data.audio_timestamps.first() {
+            if let Some(Some(last_audio_pts)) = media_data.audio_timestamps.last() {
+                println!(
+                    "Audio PTS range: {} - {} ({:.2} - {:.2} sec)",
+                    first_audio_pts,
+                    last_audio_pts,
+                    *first_audio_pts as f64 / 90000.0,
+                    *last_audio_pts as f64 / 90000.0
+                );
+            }
+        }
+    }
+
+    if !media_data.frame_timestamps.is_empty() {
+        if let Some(&(Some(first_video_pts), _)) = media_data.frame_timestamps.first() {
+            if let Some(&(Some(last_video_pts), _)) = media_data.frame_timestamps.last() {
+                println!(
+                    "Video PTS range: {} - {} ({:.2} - {:.2} sec)",
+                    first_video_pts,
+                    last_video_pts,
+                    first_video_pts as f64 / 90000.0,
+                    last_video_pts as f64 / 90000.0
+                );
+            }
+        }
     }
 
     Ok(media_data)
@@ -219,6 +328,7 @@ fn parse_pmt(payload: &[u8], payload_start: bool) -> Option<(u16, u16)> {
     }
 
     if let (Some(v), Some(a)) = (video_pid, audio_pid) {
+        println!("Found PIDs - Video: {}, Audio: {}", v, a);
         return Some((v, a));
     }
 
@@ -375,28 +485,236 @@ fn parse_sps_resolution(sps: &[u8]) -> Option<(u16, u16)> {
         return None;
     }
 
-    // For now, detect common resolutions from SPS profile/level
-    // Full parsing requires exponential-Golomb decoding
+    let profile_idc = sps[1];
 
-    // Check the actual bytes - SPS for 1280x720
-    // Common pattern: 67 4d (profile_idc=77=Main, 40, 1f=level 3.1)
+    // Initialize bitstream reader
+    let mut bit_reader = BitReader::new(&sps[4..]); // Skip NAL header + profile + constraint + level
 
-    // Simplified heuristic: Try to identify from level and known patterns
-    // This is a workaround - proper implementation needs bitstream parser
-
-    // For the specific case, let's parse the basic structure
-    let profile = sps[1];
-    let level = sps[3];
-
-    // Common resolutions based on typical encoding:
-    // Level 3.1 (0x1F) with Main profile often = 720p or 1080p
-    // We need better detection
-
-    // Default to 720p for Main profile level 3.1 (common for web streaming)
-    if profile == 0x4D && level == 0x1F {
-        return Some((1280, 720));
+    // Read seq_parameter_set_id
+    if bit_reader.read_ue().is_none() {
+        return None;
     }
 
-    // Default fallback
-    Some((1280, 720))
+    // Profile-specific fields
+    if profile_idc == 100
+        || profile_idc == 110
+        || profile_idc == 122
+        || profile_idc == 244
+        || profile_idc == 44
+        || profile_idc == 83
+        || profile_idc == 86
+        || profile_idc == 118
+        || profile_idc == 128
+    {
+        // chroma_format_idc
+        let chroma_format_idc = bit_reader.read_ue()?;
+
+        if chroma_format_idc == 3 {
+            // separate_colour_plane_flag
+            bit_reader.read_bit()?;
+        }
+
+        // bit_depth_luma_minus8
+        bit_reader.read_ue()?;
+        // bit_depth_chroma_minus8
+        bit_reader.read_ue()?;
+        // qpprime_y_zero_transform_bypass_flag
+        bit_reader.read_bit()?;
+
+        // seq_scaling_matrix_present_flag
+        if bit_reader.read_bit()? {
+            let count = if chroma_format_idc != 3 { 8 } else { 12 };
+            for _ in 0..count {
+                if bit_reader.read_bit()? {
+                    // Skip scaling list
+                    let size = if count < 6 { 16 } else { 64 };
+                    let mut last_scale = 8;
+                    let mut next_scale = 8;
+                    for _ in 0..size {
+                        if next_scale != 0 {
+                            let delta_scale = bit_reader.read_se()?;
+                            next_scale = (last_scale + delta_scale + 256) % 256;
+                        }
+                        last_scale = if next_scale == 0 {
+                            last_scale
+                        } else {
+                            next_scale
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // log2_max_frame_num_minus4
+    bit_reader.read_ue()?;
+
+    // pic_order_cnt_type
+    let pic_order_cnt_type = bit_reader.read_ue()?;
+
+    if pic_order_cnt_type == 0 {
+        // log2_max_pic_order_cnt_lsb_minus4
+        bit_reader.read_ue()?;
+    } else if pic_order_cnt_type == 1 {
+        // delta_pic_order_always_zero_flag
+        bit_reader.read_bit()?;
+        // offset_for_non_ref_pic
+        bit_reader.read_se()?;
+        // offset_for_top_to_bottom_field
+        bit_reader.read_se()?;
+
+        let num_ref_frames_in_pic_order_cnt_cycle = bit_reader.read_ue()?;
+        for _ in 0..num_ref_frames_in_pic_order_cnt_cycle {
+            // offset_for_ref_frame[i]
+            bit_reader.read_se()?;
+        }
+    }
+
+    // max_num_ref_frames
+    bit_reader.read_ue()?;
+    // gaps_in_frame_num_value_allowed_flag
+    bit_reader.read_bit()?;
+
+    // pic_width_in_mbs_minus1
+    let pic_width_in_mbs_minus1 = bit_reader.read_ue()?;
+    // pic_height_in_map_units_minus1
+    let pic_height_in_map_units_minus1 = bit_reader.read_ue()?;
+
+    // frame_mbs_only_flag
+    let frame_mbs_only_flag = bit_reader.read_bit()?;
+
+    let mut frame_crop_left = 0;
+    let mut frame_crop_right = 0;
+    let mut frame_crop_top = 0;
+    let mut frame_crop_bottom = 0;
+
+    if !frame_mbs_only_flag {
+        // mb_adaptive_frame_field_flag
+        bit_reader.read_bit()?;
+    }
+
+    // direct_8x8_inference_flag
+    bit_reader.read_bit()?;
+
+    // frame_cropping_flag
+    if bit_reader.read_bit()? {
+        frame_crop_left = bit_reader.read_ue()?;
+        frame_crop_right = bit_reader.read_ue()?;
+        frame_crop_top = bit_reader.read_ue()?;
+        frame_crop_bottom = bit_reader.read_ue()?;
+    }
+
+    // Calculate actual width and height
+    let width = ((pic_width_in_mbs_minus1 + 1) * 16) - (frame_crop_left + frame_crop_right) * 2;
+    let height =
+        ((2 - if frame_mbs_only_flag { 1 } else { 0 }) * (pic_height_in_map_units_minus1 + 1) * 16)
+            - (frame_crop_top + frame_crop_bottom) * 2;
+
+    Some((width as u16, height as u16))
+}
+
+// Bitstream reader for exponential-Golomb coding
+struct BitReader<'a> {
+    data: &'a [u8],
+    byte_offset: usize,
+    bit_offset: u8,
+}
+
+impl<'a> BitReader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        BitReader {
+            data,
+            byte_offset: 0,
+            bit_offset: 0,
+        }
+    }
+
+    fn read_bit(&mut self) -> Option<bool> {
+        if self.byte_offset >= self.data.len() {
+            return None;
+        }
+
+        let bit = (self.data[self.byte_offset] >> (7 - self.bit_offset)) & 1;
+        self.bit_offset += 1;
+
+        if self.bit_offset == 8 {
+            self.bit_offset = 0;
+            self.byte_offset += 1;
+        }
+
+        Some(bit != 0)
+    }
+
+    // Read unsigned exponential-Golomb code
+    fn read_ue(&mut self) -> Option<u32> {
+        let mut leading_zeros = 0;
+
+        while !self.read_bit()? {
+            leading_zeros += 1;
+            if leading_zeros > 31 {
+                return None; // Prevent overflow
+            }
+        }
+
+        if leading_zeros == 0 {
+            return Some(0);
+        }
+
+        let mut value = 1u32;
+        for _ in 0..leading_zeros {
+            value = (value << 1) | (if self.read_bit()? { 1 } else { 0 });
+        }
+
+        Some(value - 1)
+    }
+
+    // Read signed exponential-Golomb code
+    fn read_se(&mut self) -> Option<i32> {
+        let code = self.read_ue()?;
+        let value = if code % 2 == 0 {
+            -((code / 2) as i32)
+        } else {
+            ((code + 1) / 2) as i32
+        };
+        Some(value)
+    }
+}
+
+fn extract_aac_frames(pes_payload: &[u8]) -> (Vec<Vec<u8>>, usize) {
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    let mut last_complete_offset = 0;
+
+    while offset + 7 < pes_payload.len() {
+        // Check for ADTS sync word (0xFFF)
+        if pes_payload[offset] != 0xFF || (pes_payload[offset + 1] & 0xF0) != 0xF0 {
+            offset += 1;
+            continue;
+        }
+
+        // Parse ADTS header
+        let protection_absent = (pes_payload[offset + 1] & 0x01) == 1;
+        let frame_length = (((pes_payload[offset + 3] as usize & 0x03) << 11)
+            | ((pes_payload[offset + 4] as usize) << 3)
+            | ((pes_payload[offset + 5] as usize) >> 5)) as usize;
+
+        if frame_length < 7 || offset + frame_length > pes_payload.len() {
+            // Incomplete frame - stop here
+            break;
+        }
+
+        // Calculate ADTS header size
+        let header_size = if protection_absent { 7 } else { 9 };
+
+        // Extract raw AAC frame (without ADTS header)
+        if offset + header_size < offset + frame_length {
+            let aac_data = &pes_payload[offset + header_size..offset + frame_length];
+            frames.push(aac_data.to_vec());
+        }
+
+        offset += frame_length;
+        last_complete_offset = offset;
+    }
+
+    (frames, last_complete_offset)
 }

@@ -16,12 +16,6 @@ and for this reason, the content may be somewhat rough around the edges.
 - Zero-copy optimization
 - Compatible with major players like QuickTime, VLC, ffplay
 
-## Installation
-
-```bash
-cargo build --release
-```
-
 ## Usage
 
 ### As a Rust Library
@@ -52,6 +46,19 @@ fn main() -> std::io::Result<()> {
 ```bash
 cargo install ts2mp4
 cargo run --release -- input.ts output.mp4
+```
+
+### For developer
+
+```bash
+# dev
+cargo build
+
+# release
+cargo build --release
+
+# then
+./target/release/ts2mp4 ${INPUT_TS} ${OUTPUT_MP4}
 ```
 
 ## For WebAssembly

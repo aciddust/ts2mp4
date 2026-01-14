@@ -542,7 +542,7 @@ fn build_video_stbl(
 
     // stts
     let sample_count = samples.len() as u32;
-    let mut stts = vec![
+    let stts = vec![
         0x00,
         0x00,
         0x00,
@@ -950,7 +950,7 @@ fn build_audio_trak(
             let segment_duration_90khz = media_duration_48khz as u64 * 90000 / 48000;
 
             let elst_size = 36u32; // 8 (box header) + 28 (elst content)
-            let mut edts = vec![
+            let edts = vec![
                 // elst box
                 (elst_size >> 24) as u8,
                 (elst_size >> 16) as u8,
@@ -1130,9 +1130,9 @@ fn build_audio_minf(
 }
 
 fn build_audio_stbl(
-    media_data: &MediaData,
+    _media_data: &MediaData,
     samples: &[Vec<u8>],
-    global_min_pts: u64,
+    _global_min_pts: u64,
     ftyp_size: usize,
     moov_size: usize,
     mdat_header_size: usize,
@@ -1145,7 +1145,7 @@ fn build_audio_stbl(
 
     // stts
     let sample_count = samples.len() as u32;
-    let mut stts = vec![
+    let stts = vec![
         0x00,
         0x00,
         0x00,

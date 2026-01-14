@@ -3,13 +3,6 @@ use std::io::{self, ErrorKind};
 const TS_PACKET_SIZE: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
 
-#[derive(Debug, Clone)]
-pub struct FrameInfo {
-    pub data: Vec<u8>,
-    pub pts: Option<u64>,
-    pub dts: Option<u64>,
-}
-
 #[derive(Debug)]
 pub struct MediaData {
     pub video_stream: Vec<u8>, // Combined video stream

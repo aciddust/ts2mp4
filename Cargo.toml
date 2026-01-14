@@ -2,6 +2,13 @@
 name = "ts2mp4"
 version = "0.1.0"
 edition = "2021"
+description = "A library and CLI tool for converting MPEG-TS files to MP4 format"
+license = "MIT"
+repository = "https://github.com/aciddust/ts2mp4"
+homepage = "https://github.com/aciddust/ts2mp4"
+documentation = "https://docs.rs/ts2mp4"
+keywords = ["ts", "mp4", "mpeg", "video", "converter"]
+categories = ["multimedia::video", "command-line-utilities"]
 
 [dependencies]
 

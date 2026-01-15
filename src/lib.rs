@@ -1,7 +1,11 @@
 use std::io;
 
 mod mp4_writer;
+mod thumbnail;
 mod ts_parser;
+
+// Re-export thumbnail functions
+pub use thumbnail::{extract_thumbnail_from_mp4, extract_thumbnail_from_ts};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -10,6 +14,20 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub fn convert_ts_to_mp4_wasm(ts_data: &[u8]) -> Result<Vec<u8>, JsValue> {
     convert_ts_to_mp4(ts_data).map_err(|e| JsValue::from_str(&format!("Conversion error: {}", e)))
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn extract_thumbnail_from_ts_wasm(ts_data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    extract_thumbnail_from_ts(ts_data)
+        .map_err(|e| JsValue::from_str(&format!("Thumbnail extraction error: {}", e)))
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn extract_thumbnail_from_mp4_wasm(mp4_data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    extract_thumbnail_from_mp4(mp4_data)
+        .map_err(|e| JsValue::from_str(&format!("Thumbnail extraction error: {}", e)))
 }
 
 #[cfg(target_arch = "wasm32")]

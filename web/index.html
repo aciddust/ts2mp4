@@ -108,6 +108,57 @@
         font-size: 14px;
       }
 
+      .thumbnail-preview {
+        margin-top: 20px;
+        padding: 20px;
+        background: #f8f9ff;
+        border-radius: 10px;
+        display: none;
+        text-align: center;
+      }
+
+      .thumbnail-preview.show {
+        display: block;
+      }
+
+      .thumbnail-preview h3 {
+        color: #333;
+        font-size: 16px;
+        margin-bottom: 15px;
+      }
+
+      .thumbnail-canvas {
+        max-width: 100%;
+        height: auto;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        background: #000;
+      }
+
+      .thumbnail-actions {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+      }
+
+      .thumbnail-btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        background: #667eea;
+        color: white;
+        transition: all 0.2s ease;
+      }
+
+      .thumbnail-btn:hover {
+        background: #5568d3;
+        transform: translateY(-1px);
+      }
+
       .button-group {
         display: flex;
         gap: 10px;
@@ -204,6 +255,12 @@
         border: 1px solid #f5c6cb;
       }
 
+      .status.info {
+        background: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+
       .footer {
         margin-top: 30px;
         text-align: center;
@@ -240,6 +297,16 @@
         <div class="file-size" id="fileSize"></div>
       </div>
 
+      <div class="thumbnail-preview" id="thumbnailPreview">
+        <h3>📸 Thumbnail Preview</h3>
+        <canvas id="thumbnailCanvas" class="thumbnail-canvas"></canvas>
+        <div class="thumbnail-actions">
+          <button class="thumbnail-btn" id="downloadThumbnailBtn">
+            💾 Download as JPEG
+          </button>
+        </div>
+      </div>
+
       <div class="button-group">
         <button class="convert-btn" id="convertBtn" disabled>
           Convert to MP4
@@ -267,15 +334,24 @@
     </div>
 
     <script type="module">
-      import init, { convert_ts_to_mp4_wasm } from "./ts2mp4.js";
+      import init, {
+        convert_ts_to_mp4_wasm,
+        extract_thumbnail_from_ts_wasm,
+      } from "./ts2mp4.js";
 
       let selectedFile = null;
+      let thumbnailH264Data = null;
 
       const uploadArea = document.getElementById("uploadArea");
       const fileInput = document.getElementById("fileInput");
       const fileInfo = document.getElementById("fileInfo");
       const fileName = document.getElementById("fileName");
       const fileSize = document.getElementById("fileSize");
+      const thumbnailPreview = document.getElementById("thumbnailPreview");
+      const thumbnailCanvas = document.getElementById("thumbnailCanvas");
+      const downloadThumbnailBtn = document.getElementById(
+        "downloadThumbnailBtn"
+      );
       const convertBtn = document.getElementById("convertBtn");
       const clearBtn = document.getElementById("clearBtn");
       const progress = document.getElementById("progress");
@@ -319,8 +395,78 @@
         status.className = "status";
       }
 
+      // Extract and display thumbnail
+      async function extractAndShowThumbnail(file) {
+        try {
+          showStatus("Extracting thumbnail...", "info");
+
+          const arrayBuffer = await file.arrayBuffer();
+          const tsData = new Uint8Array(arrayBuffer);
+
+          // Extract H.264 thumbnail
+          thumbnailH264Data = extract_thumbnail_from_ts_wasm(tsData);
+
+          // Check if WebCodecs API is available
+          if (!window.VideoDecoder) {
+            throw new Error("WebCodecs API not supported in this browser");
+          }
+
+          // Decode H.264 using WebCodecs API
+          let decodedFrame = null;
+          const decoder = new VideoDecoder({
+            output: (frame) => {
+              decodedFrame = frame;
+            },
+            error: (e) => {
+              console.error("VideoDecoder error:", e);
+            },
+          });
+
+          // Configure decoder for H.264
+          decoder.configure({
+            codec: "avc1.42E01E", // H.264 Baseline Profile
+            optimizeForLatency: true,
+          });
+
+          // Decode the H.264 data
+          const chunk = new EncodedVideoChunk({
+            type: "key",
+            timestamp: 0,
+            data: thumbnailH264Data,
+          });
+
+          decoder.decode(chunk);
+          await decoder.flush();
+
+          if (!decodedFrame) {
+            throw new Error("Failed to decode frame");
+          }
+
+          // Draw to canvas
+          const ctx = thumbnailCanvas.getContext("2d");
+          thumbnailCanvas.width = decodedFrame.displayWidth;
+          thumbnailCanvas.height = decodedFrame.displayHeight;
+          ctx.drawImage(decodedFrame, 0, 0);
+
+          // Clean up
+          decodedFrame.close();
+          decoder.close();
+
+          // Show thumbnail preview
+          thumbnailPreview.classList.add("show");
+          hideStatus();
+        } catch (error) {
+          console.error("Thumbnail extraction failed:", error);
+          showStatus(
+            "Thumbnail extraction failed. You can still convert to MP4.",
+            "error"
+          );
+          setTimeout(hideStatus, 3000);
+        }
+      }
+
       // Handle file selection
-      function handleFileSelect(file) {
+      async function handleFileSelect(file) {
         if (!file) return;
 
         if (!file.name.toLowerCase().endsWith(".ts")) {
@@ -333,14 +479,41 @@
         fileSize.textContent = `Size: ${formatFileSize(file.size)}`;
         fileInfo.classList.add("show");
         convertBtn.disabled = false;
-        hideStatus();
+
+        // Extract and show thumbnail
+        await extractAndShowThumbnail(file);
+      }
+
+      // Download thumbnail as JPEG
+      function downloadThumbnailAsJPEG() {
+        if (!thumbnailCanvas) return;
+
+        thumbnailCanvas.toBlob(
+          (blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = selectedFile.name.replace(/\.ts$/i, "_thumbnail.jpg");
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showStatus("Thumbnail downloaded!", "success");
+            setTimeout(hideStatus, 2000);
+          },
+          "image/jpeg",
+          0.9
+        );
       }
 
       // Clear selection
       function clearSelection() {
         selectedFile = null;
+        thumbnailH264Data = null;
         fileInput.value = "";
         fileInfo.classList.remove("show");
+        thumbnailPreview.classList.remove("show");
         convertBtn.disabled = true;
         progress.classList.remove("show");
         hideStatus();
@@ -367,14 +540,14 @@
         clearBtn.disabled = true;
         progress.classList.add("show");
         progressFill.style.width = "0%";
-        progressText.textContent = "Reading file...";
+        progressText.textContent = `Reading file...`;
         hideStatus();
 
         try {
           // Read file
           const arrayBuffer = await selectedFile.arrayBuffer();
           progressFill.style.width = "30%";
-          progressText.textContent = "Converting...";
+          progressText.textContent = `Converting...`;
 
           // Convert to Uint8Array
           const tsData = new Uint8Array(arrayBuffer);
@@ -382,14 +555,14 @@
           // Convert TS to MP4
           const mp4Data = convert_ts_to_mp4_wasm(tsData);
           progressFill.style.width = "90%";
-          progressText.textContent = "Preparing download...";
+          progressText.textContent = `Preparing download...`;
 
           // Download result
           const outputFileName = selectedFile.name.replace(/\.ts$/i, ".mp4");
           downloadFile(mp4Data, outputFileName);
 
           progressFill.style.width = "100%";
-          progressText.textContent = "Complete!";
+          progressText.textContent = `Complete!`;
           showStatus(`Successfully converted to ${outputFileName}`, "success");
         } catch (error) {
           console.error("Conversion error:", error);
@@ -428,6 +601,7 @@
 
       convertBtn.addEventListener("click", convertFile);
       clearBtn.addEventListener("click", clearSelection);
+      downloadThumbnailBtn.addEventListener("click", downloadThumbnailAsJPEG);
 
       // Initialize on load
       initialize();

@@ -36,10 +36,22 @@ wasm-pack build --target web
 ### 기본 사용법
 
 ```bash
-./target/release/ts2mp4 <입력.ts> <출력.mp4>
+# TS를 MP4로 변환
+./target/release/ts2mp4 convert <입력.ts> <출력.mp4>
+
+# TS 파일에서 썸네일 추출
+./target/release/ts2mp4 thumbnail-ts <입력.ts> <출력.h264>
+
+# MP4 파일에서 썸네일 추출
+./target/release/ts2mp4 thumbnail-mp4 <입력.mp4> <출력.h264>
 
 # 예시
-./target/release/ts2mp4 input.ts output.mp4
+./target/release/ts2mp4 convert input.ts output.mp4
+./target/release/ts2mp4 thumbnail-ts input.ts thumbnail.h264
+./target/release/ts2mp4 thumbnail-mp4 output.mp4 thumbnail.h264
+
+# 썸네일을 이미지로 변환
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg
 ```
 
 ### 출력 예시

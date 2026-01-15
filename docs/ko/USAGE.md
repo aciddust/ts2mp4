@@ -6,11 +6,67 @@
 # 빌드
 cargo build --release
 
-# 변환 실행
-./target/release/ts2mp4 input.ts output.mp4
+# TS를 MP4로 변환
+./target/release/ts2mp4 convert input.ts output.mp4
+
+# TS 파일에서 썸네일 추출
+./target/release/ts2mp4 thumbnail-ts input.ts thumbnail.h264
+
+# MP4 파일에서 썸네일 추출
+./target/release/ts2mp4 thumbnail-mp4 input.mp4 thumbnail.h264
+
+# 추출된 썸네일을 이미지로 변환 (ffmpeg 사용)
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg
 
 # 확인
 ffprobe output.mp4
+```
+
+## 썸네일 추출 기능
+
+이 라이브러리는 영상 파일에서 썸네일을 추출하는 기능을 제공합니다.
+
+### 특징
+
+- **TS 파일**: 첫 번째 I-frame (IDR 프레임)을 추출합니다
+- **MP4 파일**: 첫 번째 키프레임을 추출합니다
+- **출력 형식**: Raw H.264 NAL units (Annex B 형식)
+- **외부 의존성 없음**: image 크레이트 등을 사용하지 않고 순수 Rust로 구현
+
+### 썸네일 활용 방법
+
+추출된 H.264 썸네일은 다양한 방법으로 활용할 수 있습니다:
+
+```bash
+# JPEG 이미지로 변환
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg
+
+# PNG 이미지로 변환
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.png
+
+# 특정 크기로 리사이즈
+ffmpeg -i thumbnail.h264 -frames:v 1 -vf scale=320:240 thumbnail_small.jpg
+```
+
+### 프로그래밍 방식 사용
+
+```rust
+use ts2mp4::{extract_thumbnail_from_ts, extract_thumbnail_from_mp4};
+use std::fs;
+
+fn main() -> std::io::Result<()> {
+    // TS 파일에서 썸네일 추출
+    let ts_data = fs::read("input.ts")?;
+    let thumbnail = extract_thumbnail_from_ts(&ts_data)?;
+    fs::write("thumbnail.h264", thumbnail)?;
+
+    // MP4 파일에서 썸네일 추출
+    let mp4_data = fs::read("input.mp4")?;
+    let thumbnail = extract_thumbnail_from_mp4(&mp4_data)?;
+    fs::write("thumbnail.h264", thumbnail)?;
+
+    Ok(())
+}
 ```
 
 ## 재생 테스트

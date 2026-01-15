@@ -10,6 +10,7 @@ and for this reason, the content may be somewhat rough around the edges.
 ## Features
 
 - **H.264 video** + **AAC audio** full support
+- **Thumbnail extraction** from TS and MP4 files
 - Pure Rust implementation (no SharedArrayBuffer required)
 - WebAssembly support
 - Safe for web environments with single-threaded operation
@@ -30,13 +31,24 @@ ts2mp4 = "0.1.0"
 then...
 
 ```rust
-use ts2mp4::convert_ts_to_mp4;
+use ts2mp4::{convert_ts_to_mp4, extract_thumbnail_from_ts, extract_thumbnail_from_mp4};
 use std::fs;
 
 fn main() -> std::io::Result<()> {
+    // Convert TS to MP4
     let ts_data = fs::read("input.ts")?;
     let mp4_data = convert_ts_to_mp4(&ts_data)?;
     fs::write("output.mp4", mp4_data)?;
+
+    // Extract thumbnail from TS
+    let thumbnail_data = extract_thumbnail_from_ts(&ts_data)?;
+    fs::write("thumbnail_ts.h264", thumbnail_data)?;
+
+    // Extract thumbnail from MP4
+    let mp4_data = fs::read("input.mp4")?;
+    let thumbnail_data = extract_thumbnail_from_mp4(&mp4_data)?;
+    fs::write("thumbnail_mp4.h264", thumbnail_data)?;
+
     Ok(())
 }
 ```
@@ -45,8 +57,22 @@ fn main() -> std::io::Result<()> {
 
 ```bash
 cargo install ts2mp4
-cargo run --release -- input.ts output.mp4
+
+# Convert TS to MP4
+cargo run --release -- convert input.ts output.mp4
+
+# Extract thumbnail from TS file
+cargo run --release -- thumbnail-ts input.ts thumbnail.h264
+
+# Extract thumbnail from MP4 file
+cargo run --release -- thumbnail-mp4 input.mp4 thumbnail.h264
 ```
+
+The thumbnail is extracted as a raw H.264 keyframe (I-frame) which can be:
+
+- Converted to an image using ffmpeg: `ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg`
+- Used directly in video processing applications
+- Decoded by H.264 decoders
 
 ### For developer
 
@@ -82,7 +108,33 @@ This will generate the following files in the `pkg/` directory:
 ### Using in Web Browsers
 
 [DEMO Page](https://aciddust.github.io/ts2mp4)
-[example](./web/index.html)
+
+Examples:
+
+- [Convert TS to MP4](./web/index.html)
+- [Extract Thumbnail](./web/thumbnail.html)
+
+```javascript
+import init, {
+  convert_ts_to_mp4_wasm,
+  extract_thumbnail_from_ts_wasm,
+  extract_thumbnail_from_mp4_wasm
+} from './pkg/ts2mp4.js';
+
+// Initialize WASM
+await init();
+
+// Convert TS to MP4
+const tsData = new Uint8Array(await file.arrayBuffer());
+const mp4Data = convert_ts_to_mp4_wasm(tsData);
+
+// Extract thumbnail from TS
+const thumbnailFromTs = extract_thumbnail_from_ts_wasm(tsData);
+
+// Extract thumbnail from MP4
+const mp4Data = new Uint8Array(await mp4File.arrayBuffer());
+const thumbnailFromMp4 = extract_thumbnail_from_mp4_wasm(mp4Data);
+```
 
 ## Why Not Use SharedArrayBuffer?
 

@@ -6,11 +6,67 @@
 # Build
 cargo build --release
 
-# Run conversion
-./target/release/ts2mp4 input.ts output.mp4
+# Convert TS to MP4
+./target/release/ts2mp4 convert input.ts output.mp4
+
+# Extract thumbnail from TS file
+./target/release/ts2mp4 thumbnail-ts input.ts thumbnail.h264
+
+# Extract thumbnail from MP4 file
+./target/release/ts2mp4 thumbnail-mp4 input.mp4 thumbnail.h264
+
+# Convert extracted thumbnail to image (using ffmpeg)
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg
 
 # Verify
 ffprobe output.mp4
+```
+
+## Thumbnail Extraction Feature
+
+This library provides functionality to extract thumbnails from video files.
+
+### Features
+
+- **TS files**: Extracts the first I-frame (IDR frame)
+- **MP4 files**: Extracts the first keyframe
+- **Output format**: Raw H.264 NAL units (Annex B format)
+- **No external dependencies**: Implemented in pure Rust without image crates
+
+### Using Thumbnails
+
+The extracted H.264 thumbnail can be utilized in various ways:
+
+```bash
+# Convert to JPEG image
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg
+
+# Convert to PNG image
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.png
+
+# Resize to specific dimensions
+ffmpeg -i thumbnail.h264 -frames:v 1 -vf scale=320:240 thumbnail_small.jpg
+```
+
+### Programmatic Usage
+
+```rust
+use ts2mp4::{extract_thumbnail_from_ts, extract_thumbnail_from_mp4};
+use std::fs;
+
+fn main() -> std::io::Result<()> {
+    // Extract thumbnail from TS file
+    let ts_data = fs::read("input.ts")?;
+    let thumbnail = extract_thumbnail_from_ts(&ts_data)?;
+    fs::write("thumbnail.h264", thumbnail)?;
+
+    // Extract thumbnail from MP4 file
+    let mp4_data = fs::read("input.mp4")?;
+    let thumbnail = extract_thumbnail_from_mp4(&mp4_data)?;
+    fs::write("thumbnail.h264", thumbnail)?;
+
+    Ok(())
+}
 ```
 
 ## Playback Testing

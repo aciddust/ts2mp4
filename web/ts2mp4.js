@@ -121,6 +121,38 @@ export function convert_ts_to_mp4_wasm(ts_data) {
     return v2;
 }
 
+/**
+ * @param {Uint8Array} mp4_data
+ * @returns {Uint8Array}
+ */
+export function extract_thumbnail_from_mp4_wasm(mp4_data) {
+    const ptr0 = passArray8ToWasm0(mp4_data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.extract_thumbnail_from_mp4_wasm(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * @param {Uint8Array} ts_data
+ * @returns {Uint8Array}
+ */
+export function extract_thumbnail_from_ts_wasm(ts_data) {
+    const ptr0 = passArray8ToWasm0(ts_data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.extract_thumbnail_from_ts_wasm(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
 export function init_panic_hook() {
     wasm.init_panic_hook();
 }

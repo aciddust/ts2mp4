@@ -36,10 +36,22 @@ wasm-pack build --target web
 ### Basic Usage
 
 ```bash
-./target/release/ts2mp4 <input.ts> <output.mp4>
+# Convert TS to MP4
+./target/release/ts2mp4 convert <input.ts> <output.mp4>
 
-# Example
-./target/release/ts2mp4 input.ts output.mp4
+# Extract thumbnail from TS file
+./target/release/ts2mp4 thumbnail-ts <input.ts> <output.h264>
+
+# Extract thumbnail from MP4 file
+./target/release/ts2mp4 thumbnail-mp4 <input.mp4> <output.h264>
+
+# Examples
+./target/release/ts2mp4 convert input.ts output.mp4
+./target/release/ts2mp4 thumbnail-ts input.ts thumbnail.h264
+./target/release/ts2mp4 thumbnail-mp4 output.mp4 thumbnail.h264
+
+# Convert thumbnail to image
+ffmpeg -i thumbnail.h264 -frames:v 1 thumbnail.jpg
 ```
 
 ### Output Example

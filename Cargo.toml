@@ -11,6 +11,7 @@ keywords = ["ts", "mp4", "mpeg", "video", "converter"]
 categories = ["multimedia::video", "command-line-utilities"]
 
 [dependencies]
+clap = { version = "4.5", features = ["derive"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

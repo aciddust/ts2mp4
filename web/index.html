@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
@@ -12,8 +12,9 @@
       }
 
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          Oxygen, Ubuntu, Cantarell, sans-serif;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+          Cantarell, sans-serif;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         min-height: 100vh;
         display: flex;
@@ -280,16 +281,16 @@
   </head>
   <body>
     <div class="container">
-      <h1>🎬 TS to MP4 Converter</h1>
+      <h1>🎬 TS/MP4 Converter</h1>
       <p class="subtitle">
-        Convert MPEG-2 Transport Stream files to MP4 format in your browser
+        Convert TS to MP4 or reset MP4 timestamps in your browser
       </p>
 
       <div class="upload-area" id="uploadArea">
         <div class="upload-icon">📁</div>
-        <div class="upload-text">Click to select or drag & drop TS file</div>
-        <div class="upload-hint">Supports .ts files</div>
-        <input type="file" id="fileInput" accept=".ts" />
+        <div class="upload-text">Click to select or drag & drop file</div>
+        <div class="upload-hint">Supports .ts and .mp4 files</div>
+        <input type="file" id="fileInput" accept=".ts,.mp4" />
       </div>
 
       <div class="file-info" id="fileInfo">
@@ -336,6 +337,7 @@
     <script type="module">
       import init, {
         convert_ts_to_mp4_wasm,
+        reset_mp4_timestamps_wasm,
         extract_thumbnail_from_ts_wasm,
       } from "./ts2mp4.js";
 
@@ -350,7 +352,7 @@
       const thumbnailPreview = document.getElementById("thumbnailPreview");
       const thumbnailCanvas = document.getElementById("thumbnailCanvas");
       const downloadThumbnailBtn = document.getElementById(
-        "downloadThumbnailBtn"
+        "downloadThumbnailBtn",
       );
       const convertBtn = document.getElementById("convertBtn");
       const clearBtn = document.getElementById("clearBtn");
@@ -368,7 +370,7 @@
           console.error("Failed to initialize WASM:", error);
           showStatus(
             "Failed to initialize converter. Please refresh the page.",
-            "error"
+            "error",
           );
         }
       }
@@ -459,7 +461,7 @@
           console.error("Thumbnail extraction failed:", error);
           showStatus(
             "Thumbnail extraction failed. You can still convert to MP4.",
-            "error"
+            "error",
           );
           setTimeout(hideStatus, 3000);
         }
@@ -469,8 +471,12 @@
       async function handleFileSelect(file) {
         if (!file) return;
 
-        if (!file.name.toLowerCase().endsWith(".ts")) {
-          showStatus("Please select a valid .ts file", "error");
+        const fileName = file.name.toLowerCase();
+        const isTS = fileName.endsWith(".ts");
+        const isMP4 = fileName.endsWith(".mp4");
+
+        if (!isTS && !isMP4) {
+          showStatus("Please select a valid .ts or .mp4 file", "error");
           return;
         }
 
@@ -480,8 +486,13 @@
         fileInfo.classList.add("show");
         convertBtn.disabled = false;
 
-        // Extract and show thumbnail
-        await extractAndShowThumbnail(file);
+        // Extract and show thumbnail (only for TS files)
+        if (isTS) {
+          await extractAndShowThumbnail(file);
+        } else {
+          // MP4 파일은 썸네일 추출 안 함
+          thumbnailPreview.classList.remove("show");
+        }
       }
 
       // Download thumbnail as JPEG
@@ -503,7 +514,7 @@
             setTimeout(hideStatus, 2000);
           },
           "image/jpeg",
-          0.9
+          0.9,
         );
       }
 
@@ -547,18 +558,32 @@
           // Read file
           const arrayBuffer = await selectedFile.arrayBuffer();
           progressFill.style.width = "30%";
-          progressText.textContent = `Converting...`;
 
           // Convert to Uint8Array
-          const tsData = new Uint8Array(arrayBuffer);
+          const fileData = new Uint8Array(arrayBuffer);
 
-          // Convert TS to MP4
-          const mp4Data = convert_ts_to_mp4_wasm(tsData);
+          const fileName = selectedFile.name.toLowerCase();
+          let mp4Data;
+          let outputFileName;
+
+          if (fileName.endsWith(".ts")) {
+            // TS to MP4 conversion
+            progressText.textContent = `Converting TS to MP4...`;
+            mp4Data = convert_ts_to_mp4_wasm(fileData);
+            outputFileName = selectedFile.name.replace(/\.ts$/i, ".mp4");
+          } else if (fileName.endsWith(".mp4")) {
+            // MP4 timestamp reset
+            progressText.textContent = `Resetting MP4 timestamps...`;
+            mp4Data = reset_mp4_timestamps_wasm(fileData);
+            outputFileName = selectedFile.name.replace(/\.mp4$/i, "_fixed.mp4");
+          } else {
+            throw new Error("Unsupported file type");
+          }
+
           progressFill.style.width = "90%";
           progressText.textContent = `Preparing download...`;
 
           // Download result
-          const outputFileName = selectedFile.name.replace(/\.ts$/i, ".mp4");
           downloadFile(mp4Data, outputFileName);
 
           progressFill.style.width = "100%";

@@ -1,7 +1,16 @@
+#![allow(dead_code)]
+
 use crate::ts_parser::MediaData;
 use std::io::{self, ErrorKind};
 
 pub fn create_mp4(media_data: MediaData) -> io::Result<Vec<u8>> {
+    create_mp4_with_options(media_data, false)
+}
+
+pub fn create_mp4_with_options(
+    media_data: MediaData,
+    reset_timestamps: bool,
+) -> io::Result<Vec<u8>> {
     if media_data.video_stream.is_empty() {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
@@ -47,6 +56,7 @@ pub fn create_mp4(media_data: MediaData) -> io::Result<Vec<u8>> {
         0, // moov_size placeholder
         mdat_header_size,
         video_data_end,
+        reset_timestamps,
     )?;
 
     let moov_size = moov_box.len();
@@ -60,6 +70,7 @@ pub fn create_mp4(media_data: MediaData) -> io::Result<Vec<u8>> {
         moov_size,
         mdat_header_size,
         video_data_end,
+        reset_timestamps,
     )?;
 
     // Step 5: Write MP4 file
@@ -92,6 +103,7 @@ fn build_moov(
     moov_size: usize,
     mdat_header_size: usize,
     video_data_end: usize,
+    reset_timestamps: bool,
 ) -> io::Result<Vec<u8>> {
     let mut moov = Vec::new();
 
@@ -108,16 +120,37 @@ fn build_moov(
         .filter_map(|&pts| pts)
         .min();
 
-    let global_min_pts = match (video_min_pts, audio_min_pts) {
-        (Some(v), Some(a)) => v.min(a),
-        (Some(v), None) => v,
-        (None, Some(a)) => a,
-        (None, None) => 0,
+    let global_min_pts = if reset_timestamps {
+        // Force reset to 0 (like FFmpeg's -avoid_negative_ts make_zero)
+        match (video_min_pts, audio_min_pts) {
+            (Some(v), Some(a)) => v.min(a),
+            (Some(v), None) => v,
+            (None, Some(a)) => a,
+            (None, None) => 0,
+        }
+    } else {
+        // Keep original behavior (no reset)
+        0
     };
 
+    // Calculate actual durations from timestamps
+    let video_duration =
+        calculate_video_duration(&media_data.frame_timestamps, video_samples.len());
+
+    let audio_duration = if !audio_samples.is_empty() {
+        calculate_audio_duration(&media_data.audio_timestamps, audio_samples.len())
+    } else {
+        0
+    };
+
+    // Use the maximum duration for the movie
+    let movie_duration = std::cmp::max(video_duration, audio_duration);
+
     // mvhd
-    let duration = video_samples.len() as u32 * 3000; // 90000 timescale, 30fps
-    moov.extend_from_slice(&build_mvhd(duration, !audio_samples.is_empty()));
+    moov.extend_from_slice(&build_mvhd(
+        movie_duration as u32,
+        !audio_samples.is_empty(),
+    ));
 
     // video trak
     moov.extend_from_slice(&build_video_trak(
@@ -127,6 +160,7 @@ fn build_moov(
         ftyp_size,
         moov_size,
         mdat_header_size,
+        video_duration,
     )?);
 
     // audio trak (if present)
@@ -139,6 +173,7 @@ fn build_moov(
             moov_size,
             mdat_header_size,
             video_data_end,
+            audio_duration,
         )?);
     }
 
@@ -274,6 +309,7 @@ fn build_video_trak(
     ftyp_size: usize,
     moov_size: usize,
     mdat_header_size: usize,
+    duration: u64,
 ) -> io::Result<Vec<u8>> {
     let mut trak = Vec::new();
 
@@ -283,6 +319,7 @@ fn build_video_trak(
         samples.len(),
         media_data.width,
         media_data.height,
+        duration,
     ));
 
     // mdia
@@ -293,6 +330,7 @@ fn build_video_trak(
         ftyp_size,
         moov_size,
         mdat_header_size,
+        duration,
     )?);
 
     let total_size = 8 + trak.len();
@@ -304,8 +342,14 @@ fn build_video_trak(
     Ok(result)
 }
 
-fn build_tkhd(track_id: u32, sample_count: usize, width: u16, height: u16) -> Vec<u8> {
-    let duration = sample_count as u32 * 3000;
+fn build_tkhd(
+    track_id: u32,
+    _sample_count: usize,
+    width: u16,
+    height: u16,
+    duration: u64,
+) -> Vec<u8> {
+    let duration = duration as u32; // Use actual duration passed from caller
     let width_fixed = (width as u32) << 16;
     let height_fixed = (height as u32) << 16;
 
@@ -412,11 +456,12 @@ fn build_video_mdia(
     ftyp_size: usize,
     moov_size: usize,
     mdat_header_size: usize,
+    duration: u64,
 ) -> io::Result<Vec<u8>> {
     let mut mdia = Vec::new();
 
     // mdhd
-    let duration = samples.len() as u32 * 3000;
+    let duration = duration as u32; // Use actual duration passed from caller
     mdia.extend_from_slice(&[
         0x00,
         0x00,
@@ -540,26 +585,23 @@ fn build_video_stbl(
     // stsd
     stbl.extend_from_slice(&build_video_stsd(media_data)?);
 
-    // stts
-    let sample_count = samples.len() as u32;
-    let stts = vec![
+    // stts - Calculate from actual timestamps
+    let stts_entries = calculate_stts_entries(&media_data.frame_timestamps);
+    let entry_count = stts_entries.len() as u32;
+    let mut stts = vec![
         0x00,
         0x00,
         0x00,
         0x00, // version + flags
-        0x00,
-        0x00,
-        0x00,
-        0x01, // entry count
-        (sample_count >> 24) as u8,
-        (sample_count >> 16) as u8,
-        (sample_count >> 8) as u8,
-        sample_count as u8,
-        0x00,
-        0x00,
-        0x0B,
-        0xB8, // sample delta = 3000
+        (entry_count >> 24) as u8,
+        (entry_count >> 16) as u8,
+        (entry_count >> 8) as u8,
+        entry_count as u8, // entry count
     ];
+    for (count, delta) in stts_entries {
+        stts.extend_from_slice(&count.to_be_bytes());
+        stts.extend_from_slice(&delta.to_be_bytes());
+    }
     let stts_size = 8 + stts.len();
     let mut stts_box = Vec::new();
     stts_box.extend_from_slice(&(stts_size as u32).to_be_bytes());
@@ -568,6 +610,7 @@ fn build_video_stbl(
     stbl.extend_from_slice(&stts_box);
 
     // stsc - Put all video samples in a single chunk
+    let sample_count = samples.len() as u32;
     stbl.extend_from_slice(&[
         0x00,
         0x00,
@@ -826,11 +869,12 @@ fn build_audio_trak(
     moov_size: usize,
     mdat_header_size: usize,
     video_data_end: usize,
+    duration: u64,
 ) -> io::Result<Vec<u8>> {
     let mut trak = Vec::new();
 
     // tkhd
-    let duration = samples.len() as u32 * 1920; // Duration in movie timescale (90kHz): 1024 samples @ 48kHz = 1920 in 90kHz
+    let duration = duration as u32; // Use actual duration passed from caller
     trak.extend_from_slice(&[
         0x00,
         0x00,
@@ -935,6 +979,7 @@ fn build_audio_trak(
         moov_size,
         mdat_header_size,
         video_data_end,
+        duration as u64,
     )?);
 
     // Add Edit List if audio doesn't start at global minimum PTS
@@ -1011,11 +1056,12 @@ fn build_audio_mdia(
     moov_size: usize,
     mdat_header_size: usize,
     video_data_end: usize,
+    duration: u64,
 ) -> io::Result<Vec<u8>> {
     let mut mdia = Vec::new();
 
     // mdhd
-    let duration = samples.len() as u32 * 1920; // 1920 = 1024 samples @ 48kHz in 90kHz timebase
+    let duration = duration as u32; // Use actual duration passed from caller
     mdia.extend_from_slice(&[
         0x00,
         0x00,
@@ -1130,7 +1176,7 @@ fn build_audio_minf(
 }
 
 fn build_audio_stbl(
-    _media_data: &MediaData,
+    media_data: &MediaData,
     samples: &[Vec<u8>],
     _global_min_pts: u64,
     ftyp_size: usize,
@@ -1143,26 +1189,23 @@ fn build_audio_stbl(
     // stsd
     stbl.extend_from_slice(&build_audio_stsd()?);
 
-    // stts
-    let sample_count = samples.len() as u32;
-    let stts = vec![
+    // stts - Calculate from actual timestamps
+    let stts_entries = calculate_audio_stts_entries(&media_data.audio_timestamps);
+    let entry_count = stts_entries.len() as u32;
+    let mut stts = vec![
         0x00,
         0x00,
         0x00,
         0x00, // version + flags
-        0x00,
-        0x00,
-        0x00,
-        0x01, // entry count
-        (sample_count >> 24) as u8,
-        (sample_count >> 16) as u8,
-        (sample_count >> 8) as u8,
-        sample_count as u8,
-        0x00,
-        0x00,
-        0x07,
-        0x80, // sample delta = 1920 (1024 samples @ 48kHz = 0.021333s in 90kHz timebase)
+        (entry_count >> 24) as u8,
+        (entry_count >> 16) as u8,
+        (entry_count >> 8) as u8,
+        entry_count as u8, // entry count
     ];
+    for (count, delta) in stts_entries {
+        stts.extend_from_slice(&count.to_be_bytes());
+        stts.extend_from_slice(&delta.to_be_bytes());
+    }
     let stts_size = 8 + stts.len();
     let mut stts_box = Vec::new();
     stts_box.extend_from_slice(&(stts_size as u32).to_be_bytes());
@@ -1171,6 +1214,7 @@ fn build_audio_stbl(
     stbl.extend_from_slice(&stts_box);
 
     // stsc - Put all audio samples in a single chunk for better compatibility
+    let sample_count = samples.len() as u32;
     stbl.extend_from_slice(&[
         0x00,
         0x00,
@@ -1520,4 +1564,158 @@ fn calculate_composition_offsets(
     }
 
     offsets
+}
+
+/// Calculate STTS entries from timestamps
+fn calculate_stts_entries(timestamps: &[(Option<u64>, Option<u64>)]) -> Vec<(u32, u32)> {
+    if timestamps.is_empty() {
+        return vec![(1, 3000)]; // Fallback: 1 sample with 3000 delta (30fps)
+    }
+
+    let mut deltas = Vec::new();
+
+    for i in 0..timestamps.len() {
+        let current_dts = timestamps[i].1.or(timestamps[i].0);
+        let next_dts = if i + 1 < timestamps.len() {
+            timestamps[i + 1].1.or(timestamps[i + 1].0)
+        } else {
+            // For the last frame, use average delta or default to 3000
+            if deltas.is_empty() {
+                current_dts.map(|d| d + 3000)
+            } else {
+                let avg_delta = deltas.iter().sum::<u64>() / deltas.len() as u64;
+                current_dts.map(|d| d + avg_delta)
+            }
+        };
+
+        let delta = match (current_dts, next_dts) {
+            (Some(cur), Some(next)) if next > cur => next - cur,
+            _ => 3000, // Fallback: 30fps
+        };
+
+        deltas.push(delta);
+    }
+
+    // Compress deltas into (count, delta) entries
+    let mut entries = Vec::new();
+    if deltas.is_empty() {
+        return vec![(1, 3000)];
+    }
+
+    let mut current_delta = deltas[0];
+    let mut count = 1u32;
+
+    for &delta in &deltas[1..] {
+        if delta == current_delta {
+            count += 1;
+        } else {
+            entries.push((count, current_delta as u32));
+            current_delta = delta;
+            count = 1;
+        }
+    }
+    entries.push((count, current_delta as u32));
+
+    entries
+}
+
+/// Calculate STTS entries for audio from timestamps
+fn calculate_audio_stts_entries(audio_timestamps: &[Option<u64>]) -> Vec<(u32, u32)> {
+    if audio_timestamps.is_empty() {
+        return vec![(1, 1920)]; // Fallback: 1024 samples @ 48kHz = 1920 ticks @ 90kHz
+    }
+
+    let mut deltas = Vec::new();
+
+    for i in 0..audio_timestamps.len() {
+        let current_pts = audio_timestamps[i];
+        let next_pts = if i + 1 < audio_timestamps.len() {
+            audio_timestamps[i + 1]
+        } else {
+            // For the last frame, use average delta or default to 1920
+            if deltas.is_empty() {
+                current_pts.map(|p| p + 1920)
+            } else {
+                let avg_delta = deltas.iter().sum::<u64>() / deltas.len() as u64;
+                current_pts.map(|p| p + avg_delta)
+            }
+        };
+
+        let delta = match (current_pts, next_pts) {
+            (Some(cur), Some(next)) if next > cur => next - cur,
+            _ => 1920, // Fallback: 1024 samples @ 48kHz
+        };
+
+        deltas.push(delta);
+    }
+
+    // Compress deltas into (count, delta) entries
+    let mut entries = Vec::new();
+    if deltas.is_empty() {
+        return vec![(1, 1920)];
+    }
+
+    let mut current_delta = deltas[0];
+    let mut count = 1u32;
+
+    for &delta in &deltas[1..] {
+        if delta == current_delta {
+            count += 1;
+        } else {
+            entries.push((count, current_delta as u32));
+            current_delta = delta;
+            count = 1;
+        }
+    }
+    entries.push((count, current_delta as u32));
+
+    entries
+}
+
+/// Calculate actual video duration from timestamps (in 90kHz timescale)
+fn calculate_video_duration(timestamps: &[(Option<u64>, Option<u64>)], sample_count: usize) -> u64 {
+    if timestamps.is_empty() || sample_count == 0 {
+        // Fallback: assume 30fps
+        return (sample_count as u64) * 3000;
+    }
+
+    // Get first and last PTS/DTS
+    let first_ts = timestamps.first().and_then(|(pts, dts)| pts.or(*dts));
+    let last_ts = timestamps.last().and_then(|(pts, dts)| pts.or(*dts));
+
+    match (first_ts, last_ts) {
+        (Some(first), Some(last)) if last >= first => {
+            let duration = last - first;
+            // Add one frame duration (assume 30fps = 3000 ticks @ 90kHz)
+            duration + 3000
+        }
+        _ => {
+            // Fallback: assume 30fps
+            (sample_count as u64) * 3000
+        }
+    }
+}
+
+/// Calculate actual audio duration from timestamps (in 90kHz timescale)
+fn calculate_audio_duration(audio_timestamps: &[Option<u64>], sample_count: usize) -> u64 {
+    if audio_timestamps.is_empty() || sample_count == 0 {
+        // Fallback: 1024 samples @ 48kHz = 1920 ticks @ 90kHz
+        return (sample_count as u64) * 1920;
+    }
+
+    // Get first and last PTS
+    let first_pts = audio_timestamps.iter().find_map(|&pts| pts);
+    let last_pts = audio_timestamps.iter().rev().find_map(|&pts| pts);
+
+    match (first_pts, last_pts) {
+        (Some(first), Some(last)) if last >= first => {
+            let duration = last - first;
+            // Add one frame duration (1024 samples @ 48kHz = 1920 ticks @ 90kHz)
+            duration + 1920
+        }
+        _ => {
+            // Fallback: 1024 samples @ 48kHz = 1920 ticks @ 90kHz
+            (sample_count as u64) * 1920
+        }
+    }
 }

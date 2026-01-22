@@ -36,6 +36,23 @@ pub fn reset_mp4_timestamps_wasm(mp4_data: &[u8]) -> Result<Vec<u8>, JsValue> {
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
+pub fn defragment_mp4_wasm(mp4_data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    defragment_mp4(mp4_data).map_err(|e| JsValue::from_str(&format!("Defragment error: {}", e)))
+}
+
+/// Convert MP4 with timestamp reset (equivalent to CLI: ts2mp4 convert -i input.mp4 -o output.mp4 --reset-timestamps)
+/// This function combines defragment and reset operations automatically:
+/// 1. If input is fragmented MP4 (fMP4): defragments to regular MP4 (timestamps automatically start from 0)
+/// 2. If input is already regular MP4: resets timestamps to start from 0
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn convert_mp4_reset_timestamps_wasm(mp4_data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    convert_mp4_reset_timestamps(mp4_data)
+        .map_err(|e| JsValue::from_str(&format!("Convert MP4 error: {}", e)))
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
 pub fn extract_thumbnail_from_ts_wasm(ts_data: &[u8]) -> Result<Vec<u8>, JsValue> {
     extract_thumbnail_from_ts(ts_data)
         .map_err(|e| JsValue::from_str(&format!("Thumbnail extraction error: {}", e)))
@@ -69,6 +86,25 @@ pub fn convert_ts_to_mp4_with_options(
     let mp4_data = mp4_writer::create_mp4_with_options(media_data, reset_timestamps)?;
 
     Ok(mp4_data)
+}
+
+/// Convert MP4 with timestamp reset (equivalent to CLI: ts2mp4 convert --reset-timestamps)
+/// This function replicates the exact behavior of the CLI convert command:
+/// 1. If input is fragmented MP4 (fMP4): defragments to regular MP4 (timestamps automatically start from 0)
+/// 2. If input is already regular MP4: resets timestamps to start from 0
+pub fn convert_mp4_reset_timestamps(mp4_data: &[u8]) -> io::Result<Vec<u8>> {
+    // Try to defragment first (this automatically resets timestamps)
+    match defragment_mp4(mp4_data) {
+        Ok(data) => {
+            // Successfully defragmented - timestamps are already reset to 0
+            Ok(data)
+        }
+        Err(_) => {
+            // Not a fragmented MP4, or defragmentation failed
+            // Apply timestamp reset to regular MP4
+            reset_mp4_timestamps(mp4_data)
+        }
+    }
 }
 
 #[cfg(test)]

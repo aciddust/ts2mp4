@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-01-31
+
+### Fixed
+
+- **Reverted to v0.1.2 legacy timing behavior**
+  - Simplified MP4 timestamp handling by removing complex timestamp analysis
+  - Uses fixed 30fps timing assumption for predictable and stable output
+  - `reset_timestamps` parameter now ignored for API compatibility
+  - Removed 189 lines of dynamic duration calculation logic
+  - Better suited for fixed framerate clipper applications
+
+### Changed
+
+- MP4 writer now uses simplified timing model (sample_count × 3000 @ 90kHz)
+- STTS boxes use single entry with fixed delta instead of dynamic entries
+
 ## [0.3.0] - 2026-01-31
 
 ### Added

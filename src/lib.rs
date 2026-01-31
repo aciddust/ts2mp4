@@ -1,5 +1,6 @@
 use std::io;
 
+mod fmp4_processor;
 mod mp4_parser;
 mod mp4_writer;
 mod thumbnail;
@@ -10,6 +11,9 @@ pub use thumbnail::{extract_thumbnail_from_mp4, extract_thumbnail_from_ts};
 
 // Re-export MP4 parser functions
 pub use mp4_parser::{defragment_mp4, reset_mp4_timestamps};
+
+// Re-export fMP4 processor
+pub use fmp4_processor::FragmentedMP4Processor;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -63,6 +67,52 @@ pub fn extract_thumbnail_from_ts_wasm(ts_data: &[u8]) -> Result<Vec<u8>, JsValue
 pub fn extract_thumbnail_from_mp4_wasm(mp4_data: &[u8]) -> Result<Vec<u8>, JsValue> {
     extract_thumbnail_from_mp4(mp4_data)
         .map_err(|e| JsValue::from_str(&format!("Thumbnail extraction error: {}", e)))
+}
+
+/// Fragmented MP4 프로세서 (WASM용)
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct FragmentedMP4ProcessorWasm {
+    processor: FragmentedMP4Processor,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl FragmentedMP4ProcessorWasm {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            processor: FragmentedMP4Processor::new(),
+        }
+    }
+
+    /// 초기화 세그먼트 설정 (m4s 파일)
+    #[wasm_bindgen]
+    pub fn set_init_segment(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        self.processor
+            .set_init_segment(data)
+            .map_err(|e| JsValue::from_str(&format!("Init segment error: {}", e)))
+    }
+
+    /// 미디어 세그먼트 처리 (m4v 파일)
+    #[wasm_bindgen]
+    pub fn process_segment(&mut self, data: &[u8]) -> Result<Vec<u8>, JsValue> {
+        self.processor
+            .process_segment(data)
+            .map_err(|e| JsValue::from_str(&format!("Segment processing error: {}", e)))
+    }
+
+    /// 프로세서 리셋
+    #[wasm_bindgen]
+    pub fn reset(&mut self) {
+        self.processor.reset();
+    }
+
+    /// 현재 base decode time 반환 (디버깅용)
+    #[wasm_bindgen]
+    pub fn get_base_decode_time(&self) -> Option<f64> {
+        self.processor.get_base_decode_time().map(|t| t as f64)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

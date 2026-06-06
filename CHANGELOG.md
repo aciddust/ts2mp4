@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-06-06
+
+### Fixed
+
+- **Video sample duration now derived from PTS instead of hardcoded 30fps**
+  - `mp4_writer` previously hardcoded every video sample to 3000 ticks
+    (90kHz / 30fps) for `mvhd`/`tkhd`/`mdhd`/`stts`, causing 60fps TS
+    sources to be written at half speed (video track ran 2x the audio
+    duration)
+  - Now computes the per-sample delta from the actual PTS range
+    (`(max - min) / (n - 1)`, assuming CFR) with a 3000-tick fallback
+  - Added unit tests for 60fps, 30fps, reordered PTS, and the fallback path
+
 ## [0.3.1] - 2026-01-31
 
 ### Fixed

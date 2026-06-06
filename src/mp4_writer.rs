@@ -1,6 +1,32 @@
 use crate::ts_parser::MediaData;
 use std::io::{self, ErrorKind};
 
+/// 비디오 샘플 1개의 표시 시간(90kHz tick)을 실제 PTS 범위에서 산출한다.
+/// CFR 가정으로 delta = (max_pts - min_pts) / (frame_count - 1).
+/// 과거에는 3000(30fps)으로 고정되어 60fps 소스가 2배 느리게 재생되는 버그가 있었다.
+/// PTS 정보가 부족하면 3000(30fps)으로 폴백한다.
+fn video_sample_delta(frame_timestamps: &[(Option<u64>, Option<u64>)]) -> u32 {
+    let mut min: Option<u64> = None;
+    let mut max: Option<u64> = None;
+    let mut count: u64 = 0;
+    for (pts, _) in frame_timestamps.iter() {
+        if let Some(p) = pts {
+            count += 1;
+            min = Some(min.map_or(*p, |m| m.min(*p)));
+            max = Some(max.map_or(*p, |m| m.max(*p)));
+        }
+    }
+    if let (Some(min), Some(max)) = (min, max) {
+        if count >= 2 && max > min {
+            let delta = (max - min) / (count - 1);
+            if delta > 0 {
+                return delta as u32;
+            }
+        }
+    }
+    3000
+}
+
 pub fn create_mp4(media_data: MediaData) -> io::Result<Vec<u8>> {
     create_mp4_with_options(media_data, false)
 }
@@ -125,7 +151,8 @@ fn build_moov(
     };
 
     // mvhd
-    let duration = video_samples.len() as u32 * 3000; // 90000 timescale, 30fps
+    let video_delta = video_sample_delta(&media_data.frame_timestamps); // 90000 timescale, 실제 fps 반영
+    let duration = video_samples.len() as u32 * video_delta;
     moov.extend_from_slice(&build_mvhd(duration, !audio_samples.is_empty()));
 
     // video trak
@@ -290,6 +317,7 @@ fn build_video_trak(
     trak.extend_from_slice(&build_tkhd(
         1,
         samples.len(),
+        video_sample_delta(&media_data.frame_timestamps),
         media_data.width,
         media_data.height,
     ));
@@ -313,8 +341,14 @@ fn build_video_trak(
     Ok(result)
 }
 
-fn build_tkhd(track_id: u32, sample_count: usize, width: u16, height: u16) -> Vec<u8> {
-    let duration = sample_count as u32 * 3000;
+fn build_tkhd(
+    track_id: u32,
+    sample_count: usize,
+    sample_delta: u32,
+    width: u16,
+    height: u16,
+) -> Vec<u8> {
+    let duration = sample_count as u32 * sample_delta;
     let width_fixed = (width as u32) << 16;
     let height_fixed = (height as u32) << 16;
 
@@ -425,7 +459,7 @@ fn build_video_mdia(
     let mut mdia = Vec::new();
 
     // mdhd
-    let duration = samples.len() as u32 * 3000;
+    let duration = samples.len() as u32 * video_sample_delta(&media_data.frame_timestamps);
     mdia.extend_from_slice(&[
         0x00,
         0x00,
@@ -549,26 +583,15 @@ fn build_video_stbl(
     // stsd
     stbl.extend_from_slice(&build_video_stsd(media_data)?);
 
-    // stts
+    // stts — 샘플 delta를 실제 PTS 기반(fps)으로 기록 (과거 3000 고정 → 60fps 2배 느림 버그 수정)
     let sample_count = samples.len() as u32;
-    let stts = vec![
-        0x00,
-        0x00,
-        0x00,
-        0x00, // version + flags
-        0x00,
-        0x00,
-        0x00,
-        0x01, // entry count
-        (sample_count >> 24) as u8,
-        (sample_count >> 16) as u8,
-        (sample_count >> 8) as u8,
-        sample_count as u8,
-        0x00,
-        0x00,
-        0x0B,
-        0xB8, // sample delta = 3000
+    let sample_delta = video_sample_delta(&media_data.frame_timestamps);
+    let mut stts = vec![
+        0x00, 0x00, 0x00, 0x00, // version + flags
+        0x00, 0x00, 0x00, 0x01, // entry count
     ];
+    stts.extend_from_slice(&sample_count.to_be_bytes());
+    stts.extend_from_slice(&sample_delta.to_be_bytes());
     let stts_size = 8 + stts.len();
     let mut stts_box = Vec::new();
     stts_box.extend_from_slice(&(stts_size as u32).to_be_bytes());
@@ -1529,4 +1552,42 @@ fn calculate_composition_offsets(
     }
 
     offsets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::video_sample_delta;
+
+    fn pts_frames(start: u64, step: u64, n: u64) -> Vec<(Option<u64>, Option<u64>)> {
+        (0..n).map(|i| (Some(start + i * step), None)).collect()
+    }
+
+    #[test]
+    fn delta_60fps_is_1500() {
+        // 90000Hz / 60fps = 1500 ticks per frame
+        let f = pts_frames(108000, 1500, 1200);
+        assert_eq!(video_sample_delta(&f), 1500);
+    }
+
+    #[test]
+    fn delta_30fps_is_3000() {
+        let f = pts_frames(0, 3000, 900);
+        assert_eq!(video_sample_delta(&f), 3000);
+    }
+
+    #[test]
+    fn delta_tolerates_reordered_pts() {
+        // B-frame 재정렬로 연속 delta가 들쭉날쭉해도 min/max 기반이라 안정적
+        let mut f = pts_frames(0, 1500, 10);
+        f.swap(2, 4);
+        f.swap(6, 7);
+        assert_eq!(video_sample_delta(&f), 1500);
+    }
+
+    #[test]
+    fn delta_fallback_when_insufficient_pts() {
+        assert_eq!(video_sample_delta(&[]), 3000);
+        assert_eq!(video_sample_delta(&[(Some(100), None)]), 3000);
+        assert_eq!(video_sample_delta(&[(None, None), (None, None)]), 3000);
+    }
 }

@@ -1850,6 +1850,216 @@ fn build_regular_mp4(
     Ok(output)
 }
 
+// ---------------------------------------------------------------------------
+// 별도 전송된 fMP4 트랙 합치기
+//
+// HLS 는 화면과 소리를 서로 다른 스트림으로 보낼 수 있다(EXT-X-MEDIA).
+// 그 경우 스트림마다 자기 moov 를 가진 독립된 fMP4 가 되므로, defragment_mp4
+// 처럼 입력 하나만 받는 함수로는 합칠 수 없다. 아래는 그 입구만 새로 낸 것이다.
+//
+// 기존 함수는 하나도 고치지 않는다. 읽기 전용으로 호출만 한다.
+// ---------------------------------------------------------------------------
+
+/// trak 의 tkhd 에서 track_id 를 읽는다.
+fn trak_id_of(trak_data: &[u8]) -> Option<u32> {
+    let boxes = parse_container_box(trak_data).ok()?;
+    let tkhd = boxes.iter().find(|b| &b.box_type == b"tkhd")?;
+    let offset = if tkhd.data.first()? == &1u8 { 20 } else { 12 };
+    let slot = tkhd.data.get(offset..offset + 4)?;
+    Some(u32::from_be_bytes([slot[0], slot[1], slot[2], slot[3]]))
+}
+
+/// 초기화 세그먼트와 미디어 세그먼트가 이어붙은 fMP4 스트림에서
+/// 템플릿 moov 와 (원본 trak, 수집된 샘플) 쌍들을 모은다.
+///
+/// defragment_mp4 의 앞 세 단계를 그대로 호출할 뿐, 새로 해석하는 것은 없다.
+fn collect_tracks(data: &[u8]) -> io::Result<(Vec<u8>, Vec<(Vec<u8>, TrackFragments)>)> {
+    let mp4 = parse_mp4(data)?;
+    let moov = mp4
+        .moov
+        .as_ref()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "moov box not found"))?;
+
+    let mut tracks = extract_track_info_from_moov(&moov.data)?;
+    collect_fragment_data(data, &mp4.all_boxes_in_order, &mut tracks)?;
+
+    // 위치가 아니라 track_id 로 짝을 맞춘다.
+    let moov_boxes = parse_container_box(&moov.data)?;
+    let mut paired = Vec::new();
+    for track in tracks {
+        let trak = moov_boxes
+            .iter()
+            .filter(|b| &b.box_type == b"trak")
+            .find(|b| trak_id_of(&b.data) == Some(track.track_id))
+            .ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::InvalidData,
+                    format!("track_id {} 에 해당하는 trak 없음", track.track_id),
+                )
+            })?;
+        paired.push((trak.data.clone(), track));
+    }
+    Ok((moov.data.clone(), paired))
+}
+
+/// 합쳐진 moov 생성.
+///
+/// build_regular_moov 와 구조는 같지만, 출력 trak 목록을 템플릿 moov 가 아니라
+/// 인자로 받은 트랙들이 결정한다는 점만 다르다. 그래서 서로 다른 스트림에서
+/// 온 트랙도 하나의 moov 에 들어갈 수 있다.
+fn build_muxed_moov(
+    template_moov: &[u8],
+    tracks: &[(Vec<u8>, TrackFragments)],
+    track_mdat_offsets: &[usize],
+) -> io::Result<Vec<u8>> {
+    let moov_boxes = parse_container_box(template_moov)?;
+    let mut output = Vec::new();
+
+    let movie_timescale = moov_boxes
+        .iter()
+        .find(|b| &b.box_type == b"mvhd")
+        .and_then(|b| {
+            let version = *b.data.first()?;
+            let at = if version == 1 { 20 } else { 12 };
+            let slot = b.data.get(at..at + 4)?;
+            Some(u32::from_be_bytes([slot[0], slot[1], slot[2], slot[3]]))
+        })
+        .unwrap_or(1000);
+
+    let max_duration = tracks
+        .iter()
+        .map(|(_, t)| {
+            let total: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+            if t.timescale != 0 && t.timescale != movie_timescale {
+                (total * movie_timescale as u64) / t.timescale as u64
+            } else {
+                total
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    let next_track_id = tracks.iter().map(|(_, t)| t.track_id).max().unwrap_or(0) + 1;
+
+    let mut traks_written = false;
+    for moov_box in &moov_boxes {
+        match &moov_box.box_type {
+            b"mvhd" => {
+                let mut mvhd = update_mvhd_duration(&moov_box.data, max_duration)?;
+                // version 0 mvhd 의 payload 는 100 바이트이고 끝 4 바이트가 next_track_ID 다.
+                if mvhd.len() >= 100 {
+                    let at = mvhd.len() - 4;
+                    mvhd[at..].copy_from_slice(&next_track_id.to_be_bytes());
+                }
+                write_box(&mut output, b"mvhd", &mvhd);
+            }
+            b"trak" => {
+                // 템플릿의 trak 은 무시하고, 받은 트랙들을 한 번만 전부 쓴다.
+                if !traks_written {
+                    traks_written = true;
+                    for (index, (original_trak, fragments)) in tracks.iter().enumerate() {
+                        let mdat_offset =
+                            track_mdat_offsets.get(index).copied().unwrap_or(8000);
+                        let trak = build_regular_trak(original_trak, fragments, mdat_offset)?;
+                        write_box(&mut output, b"trak", &trak);
+                    }
+                }
+            }
+            // mvex 는 뒤에 fragment 가 온다는 선언이므로 합쳐진 결과에서는 뺀다.
+            b"mvex" => {}
+            _ => write_box(&mut output, &moov_box.box_type, &moov_box.data),
+        }
+    }
+
+    if !traks_written {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "템플릿 moov 에 trak 이 없어 트랙을 배치할 수 없음",
+        ));
+    }
+    Ok(output)
+}
+
+/// 합쳐진 트랙들로 일반 MP4 를 만든다.
+fn build_muxed_mp4(
+    template_moov: &[u8],
+    tracks: &[(Vec<u8>, TrackFragments)],
+) -> io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+
+    let ftyp_data = {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"isom");
+        data.extend_from_slice(&[0, 0, 0, 2]);
+        data.extend_from_slice(b"isom");
+        data.extend_from_slice(b"iso2");
+        data.extend_from_slice(b"avc1");
+        data.extend_from_slice(b"mp41");
+        data
+    };
+    write_box(&mut output, b"ftyp", &ftyp_data);
+
+    // moov 크기를 먼저 알아야 mdat offset 을 정할 수 있다.
+    let temp_moov = build_muxed_moov(template_moov, tracks, &[])?;
+    let moov_size = temp_moov.len() + 8;
+    let ftyp_size = 32;
+
+    let mut track_mdat_offsets = Vec::new();
+    let mut current_offset = ftyp_size + moov_size + 8;
+    for (_, track) in tracks {
+        track_mdat_offsets.push(current_offset);
+        current_offset += track.mdat_data.len();
+    }
+
+    let moov_data = build_muxed_moov(template_moov, tracks, &track_mdat_offsets)?;
+    // 크기가 달라지면 위에서 계산한 offset 이 어긋난다.
+    if moov_data.len() != temp_moov.len() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "moov 크기가 offset 계산 전후로 달라짐",
+        ));
+    }
+    write_box(&mut output, b"moov", &moov_data);
+
+    let mut mdat_data = Vec::new();
+    for (_, track) in tracks {
+        mdat_data.extend_from_slice(&track.mdat_data);
+    }
+    write_box(&mut output, b"mdat", &mdat_data);
+
+    Ok(output)
+}
+
+/// 따로 전송된 영상 fMP4 와 소리 fMP4 를 트랙 두 개짜리 MP4 하나로 합친다.
+///
+/// 각 인자는 초기화 세그먼트에 미디어 세그먼트들을 이어붙인 바이트다.
+/// HLS 에서 EXT-X-MAP 의 대상과 그 뒤 세그먼트들을 순서대로 붙이면 된다.
+///
+/// track_id 가 겹치면 오류를 돌려준다. 겹치는 입력은 호출 측에서 다시 번호를
+/// 매겨야 하며, 여기서 조용히 바꾸면 원본과 어긋나기 때문이다.
+pub fn mux_fmp4_tracks(video: &[u8], audio: &[u8]) -> io::Result<Vec<u8>> {
+    let (template_moov, mut tracks) = collect_tracks(video)?;
+    let (_, audio_tracks) = collect_tracks(audio)?;
+    tracks.extend(audio_tracks);
+
+    if tracks.is_empty() {
+        return Err(io::Error::new(ErrorKind::InvalidData, "합칠 트랙이 없음"));
+    }
+
+    let mut seen = Vec::new();
+    for (_, track) in &tracks {
+        if seen.contains(&track.track_id) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                format!("track_id {} 가 중복됨", track.track_id),
+            ));
+        }
+        seen.push(track.track_id);
+    }
+
+    build_muxed_mp4(&template_moov, &tracks)
+}
+
 /// 일반 MP4용 moov 박스 생성
 fn build_regular_moov(
     original_moov_data: &[u8],
@@ -2488,6 +2698,39 @@ fn build_stss(samples: &[FragmentSampleInfo]) -> io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // 잘린 입력이나 엉뚱한 바이트가 들어와도 패닉 없이 오류로 돌아와야 한다.
+    #[test]
+    fn mux_rejects_malformed_input_without_panicking() {
+        let cases: [&[u8]; 5] = [
+            b"",
+            b"not an mp4 at all",
+            &[0, 0, 0, 8],                      // 헤더만 있고 본문 없음
+            b"\x00\x00\x00\x10ftypisom\x00\x00\x00\x00",  // ftyp 만, moov 없음
+            &[0xff; 64],
+        ];
+        for (i, bad) in cases.iter().enumerate() {
+            assert!(
+                mux_fmp4_tracks(bad, bad).is_err(),
+                "case {i}: 잘못된 입력이 통과됨"
+            );
+        }
+    }
+
+    #[test]
+    fn mux_rejects_when_one_side_is_valid_shaped_but_empty() {
+        let ftyp = b"\x00\x00\x00\x10ftypisom\x00\x00\x00\x00";
+        assert!(mux_fmp4_tracks(ftyp, b"").is_err());
+        assert!(mux_fmp4_tracks(b"", ftyp).is_err());
+    }
+
+    #[test]
+    fn trak_id_of_handles_short_input() {
+        assert_eq!(trak_id_of(&[]), None);
+        assert_eq!(trak_id_of(&[0, 0, 0, 8]), None);
+    }
+
     use super::*;
 
     #[test]

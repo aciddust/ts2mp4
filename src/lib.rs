@@ -10,7 +10,7 @@ mod ts_parser;
 pub use thumbnail::{extract_thumbnail_from_mp4, extract_thumbnail_from_ts};
 
 // Re-export MP4 parser functions
-pub use mp4_parser::{defragment_mp4, reset_mp4_timestamps};
+pub use mp4_parser::{defragment_mp4, mux_fmp4_tracks, reset_mp4_timestamps};
 
 // Re-export fMP4 processor
 pub use fmp4_processor::FragmentedMP4Processor;

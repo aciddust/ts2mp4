@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`mux_fmp4_tracks`: combine separately delivered fMP4 video and audio into one MP4**
+  - HLS can ship picture and sound as independent streams (`EXT-X-MEDIA`),
+    each an fMP4 with its own `moov`. `defragment_mp4` takes a single input,
+    so it cannot join them and the sound is lost
+  - New entry point accepts two byte streams (init segment followed by its
+    media segments) and emits a regular MP4 carrying both tracks
+  - Reuses the existing fragment reader and `trak` builder; `mvex` is dropped
+    from the muxed output, and duplicate `track_id`s are rejected rather than
+    silently renumbered
+  - No existing function was modified: `defragment_mp4`,
+    `convert_ts_to_mp4*`, `reset_mp4_timestamps`, the thumbnail helpers and
+    `FragmentedMP4Processor` all produce byte-identical output
+
 ## [0.3.2] - 2026-06-06
 
 ### Fixed

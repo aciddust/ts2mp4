@@ -25,3 +25,9 @@ Thumbs.db
 *.mp4
 test_data/
 shelf
+# 파이썬 확장 빌드 산출물
+/dist/
+*.so
+*.pyd
+__pycache__/
+.venv/

@@ -53,6 +53,46 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+### As a Python Library
+
+```bash
+pip install ts2mp4
+```
+
+Every function takes `bytes` and returns `bytes`. No temporary files and no
+external binary on `PATH`. Invalid input raises `ValueError`.
+
+```python
+import ts2mp4
+
+# MPEG-TS to MP4
+mp4 = ts2mp4.convert_ts_to_mp4(ts_bytes)
+mp4 = ts2mp4.convert_ts_to_mp4(ts_bytes, reset_timestamps=True)
+
+# Fragmented MP4 to regular MP4
+mp4 = ts2mp4.defragment_mp4(fmp4_bytes)
+mp4 = ts2mp4.convert_mp4_reset_timestamps(mp4_bytes)
+
+# HLS delivering picture and sound separately: join them into one file
+mp4 = ts2mp4.mux_fmp4_tracks(video_bytes, audio_bytes)
+
+# First keyframe as H.264
+frame = ts2mp4.extract_thumbnail_from_mp4(mp4_bytes)
+
+# Streaming segments
+processor = ts2mp4.FragmentedMP4Processor()
+processor.set_init_segment(init_bytes)
+for segment in segments:
+    processed = processor.process_segment(segment)
+print(processor.base_decode_time)
+```
+
+Each argument is copied and the GIL is released for the duration of the work,
+so other threads keep running while a file is being processed.
+
+Wheels are `abi3`, so one wheel per platform covers Python 3.9 and newer. Type
+stubs ship with the package.
+
 ### As a CLI Tool
 
 ```bash

@@ -121,6 +121,163 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+// ---------------------------------------------------------------------------
+// 파이썬 바인딩
+//
+// wasm32 쪽 래퍼와 같은 자리, 같은 방식이다. 네이티브 함수를 감싸기만 하고
+// 변환 로직은 하나도 두지 않는다.
+//
+// 입력은 복사한 뒤 py.detach 로 GIL 을 놓고 처리한다. 미디어 한 편을 다루는 동안 다른
+// 파이썬 스레드가 멈추면 서버에서 쓰기 어렵기 때문이다. 복사 비용은 파싱과
+// 재조립에 비하면 무시할 수준이다.
+// ---------------------------------------------------------------------------
+#[cfg(feature = "python")]
+mod python {
+    use pyo3::exceptions::PyValueError;
+    use pyo3::prelude::*;
+    use pyo3::types::PyBytes;
+
+    fn to_py(result: std::io::Result<Vec<u8>>) -> PyResult<Vec<u8>> {
+        result.map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// MPEG-TS 를 MP4 로 변환한다.
+    #[pyfunction]
+    #[pyo3(name = "convert_ts_to_mp4", signature = (data, reset_timestamps = false))]
+    fn convert_ts_to_mp4<'py>(
+        py: Python<'py>,
+        data: &[u8],
+        reset_timestamps: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let owned = data.to_vec();
+        let out = py.detach(move || {
+            super::convert_ts_to_mp4_with_options(&owned, reset_timestamps)
+        });
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// fragmented MP4 를 일반 MP4 로 펼친다.
+    #[pyfunction]
+    #[pyo3(name = "defragment_mp4")]
+    fn defragment_mp4<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+        let owned = data.to_vec();
+        let out = py.detach(move || super::defragment_mp4(&owned));
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// MP4 타임스탬프를 0 부터 시작하도록 되돌린다.
+    #[pyfunction]
+    #[pyo3(name = "reset_mp4_timestamps")]
+    fn reset_mp4_timestamps<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+        let owned = data.to_vec();
+        let out = py.detach(move || super::reset_mp4_timestamps(&owned));
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// fMP4 면 펼치고, 일반 MP4 면 타임스탬프만 되돌린다.
+    #[pyfunction]
+    #[pyo3(name = "convert_mp4_reset_timestamps")]
+    fn convert_mp4_reset_timestamps<'py>(
+        py: Python<'py>,
+        data: &[u8],
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let owned = data.to_vec();
+        let out = py.detach(move || super::convert_mp4_reset_timestamps(&owned));
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// 따로 전송된 영상 fMP4 와 소리 fMP4 를 트랙 두 개짜리 MP4 로 합친다.
+    #[pyfunction]
+    #[pyo3(name = "mux_fmp4_tracks")]
+    fn mux_fmp4_tracks<'py>(
+        py: Python<'py>,
+        video: &[u8],
+        audio: &[u8],
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let (v, a) = (video.to_vec(), audio.to_vec());
+        let out = py.detach(move || super::mux_fmp4_tracks(&v, &a));
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// TS 의 첫 키프레임을 뽑는다.
+    #[pyfunction]
+    #[pyo3(name = "extract_thumbnail_from_ts")]
+    fn extract_thumbnail_from_ts<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+        let owned = data.to_vec();
+        let out = py.detach(move || super::extract_thumbnail_from_ts(&owned));
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// MP4 의 첫 키프레임을 뽑는다.
+    #[pyfunction]
+    #[pyo3(name = "extract_thumbnail_from_mp4")]
+    fn extract_thumbnail_from_mp4<'py>(
+        py: Python<'py>,
+        data: &[u8],
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let owned = data.to_vec();
+        let out = py.detach(move || super::extract_thumbnail_from_mp4(&owned));
+        Ok(PyBytes::new(py, &to_py(out)?))
+    }
+
+    /// 세그먼트를 이어서 받아 처리하는 fMP4 처리기.
+    #[pyclass(name = "FragmentedMP4Processor")]
+    struct Processor {
+        inner: super::FragmentedMP4Processor,
+    }
+
+    #[pymethods]
+    impl Processor {
+        #[new]
+        fn new() -> Self {
+            Self {
+                inner: super::FragmentedMP4Processor::new(),
+            }
+        }
+
+        fn set_init_segment(&mut self, data: &[u8]) -> PyResult<()> {
+            self.inner
+                .set_init_segment(data)
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+
+        fn process_segment<'py>(
+            &mut self,
+            py: Python<'py>,
+            data: &[u8],
+        ) -> PyResult<Bound<'py, PyBytes>> {
+            let out = self
+                .inner
+                .process_segment(data)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            Ok(PyBytes::new(py, &out))
+        }
+
+        fn reset(&mut self) {
+            self.inner.reset();
+        }
+
+        #[getter]
+        fn base_decode_time(&self) -> Option<u64> {
+            self.inner.get_base_decode_time()
+        }
+    }
+
+    #[pymodule]
+    fn _ts2mp4(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+        m.add_function(wrap_pyfunction!(convert_ts_to_mp4, m)?)?;
+        m.add_function(wrap_pyfunction!(defragment_mp4, m)?)?;
+        m.add_function(wrap_pyfunction!(reset_mp4_timestamps, m)?)?;
+        m.add_function(wrap_pyfunction!(convert_mp4_reset_timestamps, m)?)?;
+        m.add_function(wrap_pyfunction!(mux_fmp4_tracks, m)?)?;
+        m.add_function(wrap_pyfunction!(extract_thumbnail_from_ts, m)?)?;
+        m.add_function(wrap_pyfunction!(extract_thumbnail_from_mp4, m)?)?;
+        m.add_class::<Processor>()?;
+        Ok(())
+    }
+}
+
 pub fn convert_ts_to_mp4(ts_data: &[u8]) -> io::Result<Vec<u8>> {
     convert_ts_to_mp4_with_options(ts_data, false)
 }

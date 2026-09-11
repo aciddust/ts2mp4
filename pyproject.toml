@@ -1,0 +1,34 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ts2mp4"
+description = "Media converter (MPEG-2 TS and fragmented MP4 to MP4)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+keywords = ["ts", "mp4", "mpeg", "video", "converter", "hls", "fmp4"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Multimedia :: Video :: Conversion",
+    "License :: OSI Approved :: MIT License",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/aciddust/ts2mp4"
+Repository = "https://github.com/aciddust/ts2mp4"
+Changelog = "https://github.com/aciddust/ts2mp4/blob/main/CHANGELOG.md"
+
+[tool.maturin]
+# 확장 모듈은 _ts2mp4 로 비공개로 두고, 공개 표면은 python/ts2mp4/__init__.py 가 정한다.
+# 이렇게 하지 않으면 ts2mp4.ts2mp4 라는 내부 모듈이 그대로 드러난다.
+python-source = "python"
+module-name = "ts2mp4._ts2mp4"
+# extension-module 은 여기서만 켠다. Cargo.toml 의 python 피처에 넣으면
+# cargo test 가 libpython 링크 실패로 깨진다.
+features = ["python", "pyo3/extension-module"]
+# abi3 라서 파이썬 마이너 버전마다 휠을 만들 필요가 없다.
+# 플랫폼당 하나면 3.9 이상 전부 커버한다.

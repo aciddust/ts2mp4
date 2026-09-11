@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Python bindings, published as `ts2mp4` on PyPI**
+  - Every entry point is exposed as `bytes` in, `bytes` out, so a Python
+    service can use the library without temp files or a binary on `PATH`
+  - Arguments are copied and the GIL is released during the work
+  - `abi3` wheels: one per platform covers Python 3.9 and newer, instead of
+    one per Python minor version
+  - Gated behind an optional `python` feature, so default builds, the CLI and
+    the WebAssembly target are unchanged. The WASM module exports exactly the
+    same functions as before
 - **`mux_fmp4_tracks`: combine separately delivered fMP4 video and audio into one MP4**
   - HLS can ship picture and sound as independent streams (`EXT-X-MEDIA`),
     each an fMP4 with its own `moov`. `defragment_mp4` takes a single input,

@@ -12,6 +12,14 @@ categories = ["multimedia::video", "command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+# 파이썬 바인딩 전용. 기본 빌드에는 들어가지 않는다.
+# extension-module 은 여기서 켜지 않는다. 켜면 libpython 을 링크하지 않아
+# cargo test 가 링크 단계에서 깨진다. 휠을 만들 때만 pyproject.toml 이 켠다.
+pyo3 = { version = "0.29", features = ["abi3-py39"], optional = true }
+
+[features]
+# 파이썬 확장 모듈로 빌드할 때만 켠다.
+python = ["dep:pyo3"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
